@@ -50,10 +50,11 @@ declare class VacBot {
     batteryIsLow: boolean;
     cleanReport: any;
     chargeStatus: any;
+    chargeMode: any;
     cleanSpeed: any;
     waterLevel: any;
     waterboxInfo: any;
-    moppingType: number;
+    moppingType: any;
     scrubbingType: any;
     sleepStatus: any;
     deebotPosition: {
@@ -99,10 +100,49 @@ declare class VacBot {
     createMapImageOnly: boolean;
     mapDataObject: any[];
     mapDataObjectQueue: any[];
+    mapImageDataQueue: any[];
     schedule: any[];
     vacBotCommand: typeof import("./950type/command") | typeof import("./non950type/command");
     protocolModule: typeof import("./950type/ecovacsMQTT_JSON") | typeof import("./non950type/ecovacsMQTT_XML") | typeof import("./non950type/ecovacsXMPP_XML");
     ecovacs: import("./950type/ecovacsMQTT_JSON") | import("./non950type/ecovacsMQTT_XML") | import("./non950type/ecovacsXMPP_XML");
+    /**
+     * Handle object with infos about the maps to provide a full map data object
+     * @param {Object} mapsData
+     * @returns {Promise<void>}
+     */
+    handleMapsEvent(mapsData: any): Promise<void>;
+    /**
+     * Handle object with spot area data to provide a full map data object
+     * @param {Object} spotAreasObject
+     * @returns {Promise<void>}
+     */
+    handleMapSpotAreasEvent(spotAreasObject: any): Promise<void>;
+    /**
+     * Handle object with spot area info data to provide a full map data object
+     * @param {Object} spotAreaInfo
+     * @returns {Promise<void>}
+     */
+    handleMapSpotAreaInfo(spotAreaInfo: any): Promise<void>;
+    /**
+     * Handle object with virtual boundary data to provide a full map data object
+     * @param {Object} virtualBoundaries
+     * @returns {Promise<void>}
+     */
+    handleMapVirtualBoundaries(virtualBoundaries: any): Promise<void>;
+    /**
+     * Handle object with virtual boundary info data to provide a full map data object
+     * @param {Object} virtualBoundaryInfo
+     * @returns {Promise<void>}
+     */
+    handleMapVirtualBoundaryInfo(virtualBoundaryInfo: any): Promise<void>;
+    handleZeroVirtualBoundariesForMap(mapID: any): void;
+    handleMapDataReady(): void;
+    /**
+     * Handle object with map image data to provide a full map data object
+     * @param {Object} mapImageData
+     * @returns {Promise<void>}
+     */
+    handleMapImageData(mapImageData: any): Promise<void>;
     /**
      * It takes a single argument, `mode`, which defaults to `"Clean"` (auto clean)
      * The function then calls the `run` function with the value of `mode` as the first argument
@@ -165,42 +205,6 @@ declare class VacBot {
      * @param args - zero or more arguments to perform the command
      */
     run(command: string, ...args: any[]): void;
-    /**
-     * Handle object with map info data to provide a full map data object
-     * @param {Object} mapData
-     * @returns {Promise<void>}
-     */
-    handleMapsEvent(mapData: any): Promise<void>;
-    /**
-     * Handle object with spot area data to provide a full map data object
-     * @param {Object} spotAreas
-     * @returns {Promise<void>}
-     */
-    handleMapSpotAreasEvent(spotAreas: any): Promise<void>;
-    /**
-     * Handle object with virtual boundary data to provide a full map data object
-     * @param {Object} virtualBoundaries
-     * @returns {Promise<void>}
-     */
-    handleMapVirtualBoundaries(virtualBoundaries: any): Promise<void>;
-    /**
-     * Handle object with spot area info data to provide a full map data object
-     * @param {Object} spotAreaInfo
-     * @returns {Promise<void>}
-     */
-    handleMapSpotAreaInfo(spotAreaInfo: any): Promise<void>;
-    /**
-     * Handle object with virtual boundary info data to provide a full map data object
-     * @param {Object} virtualBoundaryInfo
-     * @returns {Promise<void>}
-     */
-    handleMapVirtualBoundaryInfo(virtualBoundaryInfo: any): Promise<void>;
-    /**
-     * Handle object with map image data to provide a full map data object
-     * @param {Object} mapImageInfo
-     * @returns {Promise<void>}
-     */
-    handleMapImageInfo(mapImageInfo: any): Promise<void>;
     /**
      * Get the name of the spot area that the bot is currently in
      * @param {string} currentSpotAreaID - the ID of the spot area that the player is currently in
@@ -320,12 +324,12 @@ declare class VacBot {
      * Returns true if you can retrieve information about "round mop" (life span)
      * @returns {boolean}
      */
-    hasRoundMops(): boolean;
+    hasRoundMopInfo(): boolean;
     /**
-     * Returns true if you can retrieve information about "round mop" (life span)
+     * Returns true if you can retrieve information about "air freshener" (life span)
      * @returns {boolean}
      */
-    hasRoundMopInfo(): boolean;
+    hasAirFreshenerInfo(): boolean;
     /**
      * Returns true if the model has Edge cleaning mode
      * It is assumed that a model can have either an Edge or Spot Area mode
@@ -422,16 +426,15 @@ declare class VacBot {
      */
     sendCommand(command: any): void;
     /**
-     * It disconnects the robot
+     * Disconnect from MQTT server (fully async)
+     */
+    disconnectAsync(): Promise<void>;
+    /**
+     * Disconnect from MQTT server
      */
     disconnect(): void;
-    /**
-     * Replace the `did` and `secret` with "[REMOVED]"
-     * @param {string} logData - The log data to be removed
-     * @returns {string} The log data with `did` and `secret` removed
-     */
-    removeFromLogs(logData: string): string;
     callCleanResultsLogsApi(): Promise<any>;
+    getCryptoHashStringForSecuredContent(): string;
     downloadSecuredContent(url: any, targetFilename: any): Promise<void>;
 }
 //# sourceMappingURL=vacBot.d.ts.map

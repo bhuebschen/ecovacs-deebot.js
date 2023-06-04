@@ -212,7 +212,7 @@ class Ecovacs extends EventEmitter {
                 for (let i in this.bot.cleanLog) {
                     if (this.bot.cleanLog.hasOwnProperty(i)) {
                         cleanLog.push(this.bot.cleanLog[i]);
-                        tools.envLog('[Ecovacs] Logs: %s', JSON.stringify(this.bot.cleanLog[i]));
+                        tools.envLogInfo(`[handleMessagePayload] Logs: ${JSON.stringify(this.bot.cleanLog[i])}`);
                     }
                 }
                 if (cleanLog.length) {
@@ -247,7 +247,7 @@ class Ecovacs extends EventEmitter {
                         this.emit('Maps', this.bot.maps);
                     }
                 } catch(e) {
-                    tools.envLog('[Ecovacs] Error on MapM: %s', e.message);
+                    tools.envLogInfo(`[handleMessagePayload] Error on MapM: ${e.message}`);
                 }
                 break;
             case 'PullMP':
@@ -258,7 +258,7 @@ class Ecovacs extends EventEmitter {
                         this.emit('MapImageData', mapImage);
                     }
                 } catch (e) {
-                    this.emitError('-2', 'Error handling map image: %s' + e.message);
+                    this.emitError('-2', `Error handling map image: ${e.message}`);
                 }
                 break;
             case 'MapSet': {
@@ -274,6 +274,7 @@ class Ecovacs extends EventEmitter {
                 // Spot area and virtual wall data
                 let mapsubset = await this.bot.handlePullM(payload);
                 if (mapsubset && (mapsubset['mapsubsetEvent'] !== 'error')) {
+                    // MapSpotAreaInfo, MapVirtualBoundaryInfo
                     this.emit(mapsubset['mapsubsetEvent'], mapsubset['mapsubsetData']);
                 }
                 break;
@@ -311,7 +312,7 @@ class Ecovacs extends EventEmitter {
                 // TODO: implement these events
                 break;
             default:
-                tools.envLog('[Ecovacs] Unknown response type received: %s', JSON.stringify(event));
+                tools.envLogWarn(`unknown response type received: ${JSON.stringify(event)}`);
                 break;
         }
     }
@@ -343,6 +344,7 @@ class Ecovacs extends EventEmitter {
             emitComponent['side_brush'] &&
             (!this.bot.hasMainBrush() || emitComponent['main_brush']) &&
             (!this.bot.hasRoundMopInfo() || emitComponent['round_mop']) &&
+            (!this.bot.hasAirFreshenerInfo() || emitComponent['air_freshener']) &&
             (!this.bot.hasUnitCareInfo() || emitComponent['unit_care'])) {
             this.emit('LifeSpan', {
                 'filter': this.bot.components['filter'],
@@ -359,7 +361,7 @@ class Ecovacs extends EventEmitter {
      * @param {string} message - the error message
      */
     emitError(code, message) {
-        tools.envLog(`[EcovacsMQTT] Received error event with code '${code}' and message '${message}'`);
+        tools.envLogWarn(`received error event with code '${code}' and message '${message}'`);
         this.bot.errorCode = code;
         this.bot.errorDescription = message;
         this.emitLastError();
@@ -445,7 +447,7 @@ class Ecovacs extends EventEmitter {
     /**
      * @abstract
      */
-    disconnect() {}
+    async disconnect() {}
 }
 
 module.exports = Ecovacs;

@@ -4,7 +4,8 @@ exports.AUTH_GL_API = 'https://gl-{country}-api.{domain}/v1/private/{country}/{l
 exports.AUTH_GL_OPENAPI = 'https://gl-{country}-openapi.{domain}/v1/global/auth/getAuthCode';
 
 exports.REALM = 'ecouser.net';
-exports.PORTAL_ECOUSER_API = 'https://portal-{continent}.ecouser.net/api';
+exports.PORTAL_ECOUSER_API = 'https://api-app.dc-{continent}.ww.ecouser.net/api';
+exports.PORTAL_ECOUSER_API_LEGACY = 'https://portal-{continent}.ecouser.net/api';
 exports.PORTAL_ECOUSER_API_CN = 'https://portal.ecouser.net/api';
 
 exports.APP_ECOUSER_API = 'https://portal-{continent}.ecouser.net/app';
@@ -39,3 +40,5 @@ exports.APP_ID_YEEDI = "yeedi";
 exports.APP_SK = "2ea31cf06e6711eaa0aff7b9558a534e";
 exports.APP_SK_GLOBAL = "2ea31cf06e6711eaa0aff7b9558a534e";
 exports.APP_SK_YEEDI = "8b611ff06e6211eab47193426edbdb27";
+
+exports.CRC_EMPTY_PIECE = "1295764014";

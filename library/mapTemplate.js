@@ -1,29 +1,14 @@
 'use strict';
 
+const map = require('./mapInfo');
 const tools = require('./tools.js');
 const lzma = require('lzma');
-const map = require('./mapTemplate');
 
-/**
-* Dictionary of the spot area types
-* @see i18n.js for translation dictionary
-**/
-const SPOTAREA_SUBTYPES = {
-    '0': 'Default  (A, B, C...)',
-    '1': 'Living room',
-    '2': 'Dining room',
-    '3': 'Bedroom',
-    '4': 'Study',
-    '5': 'Kitchen',
-    '6': 'Bathroom',
-    '7': 'Laundry',
-    '8': 'Lounge',
-    '9': 'Storeroom',
-    '10': 'Kids room',
-    '11': 'Sunroom',
-    '12': 'Corridor',
-    '13': 'Balcony',
-    '14': 'Gym'
+const MAPINFOTYPE_FROM_ECOVACS = {
+    "ol": "outline",
+    "st": "wifiHeatMap",
+    "ai": "ai",
+    "wa": "workarea"
 };
 
 /**
@@ -42,13 +27,6 @@ const SPOTAREA_COLORS = [
     '#ffa1a1',
     '#9fcfff'
 ];
-
-const MAPINFOTYPE_FROM_ECOVACS = {
-    "ol": "outline",
-    "st": "wifiHeatMap",
-    "ai": "ai",
-    "wa": "workarea"
-};
 
 /**
  * A set of colors for the element types
@@ -70,8 +48,6 @@ const MAP_COLORS = {
 };
 
 const POSITION_OFFSET = 400; // the positions of the charger and the Deebot need an offset of 400 pixels
-
-let mapDataObject = null;
 
 class EcovacsMapImageBase {
     constructor(mapID, mapType, mapTotalWidth, mapTotalHeight, mapPixel) {
@@ -97,7 +73,7 @@ class EcovacsMapImageBase {
             try {
                 await this.initCanvas();
             } catch (e) {
-                tools.envLog(`[EcovacsMapImageBase] initCanvas failed: ${e.message}`);
+                tools.envLogInfo(`[EcovacsMapImageBase] initCanvas failed: ${e.message}`);
             }
         })();
     }
@@ -211,7 +187,7 @@ class EcovacsMapImageBase {
         }
     }
 
-    async getBase64PNG(deebotPosition, chargerPosition, currentMapMID) {
+    async getBase64PNG(deebotPosition, chargerPosition, currentMapMID, mapDataObject) {
         if (!tools.isCanvasModuleAvailable()) {
             return null;
         }
@@ -231,14 +207,12 @@ class EcovacsMapImageBase {
         // Draw floor map
         finalContext.drawImage(this.mapFloorCanvas, 0, 0, this.mapTotalWidth, this.mapTotalHeight);
 
-        // Get mapObject
-        let mapObject = null;
-
-        if (map.mapDataObject !== null) {
+        if (mapDataObject !== null) {
+            let mapObject;
             if (this.mapID === undefined) {
-                mapObject = getCurrentMapObject(map.mapDataObject);
+                mapObject = map.getCurrentMapObject(mapDataObject);
             } else {
-                mapObject = getMapObject(map.mapDataObject, this.mapID);
+                mapObject = map.getMapObject(mapDataObject, this.mapID);
             }
             // Draw spotAreas
             let areaCanvas = createCanvas(this.mapTotalWidth, this.mapTotalHeight);
@@ -259,6 +233,8 @@ class EcovacsMapImageBase {
                     areaContext.closePath();
                     areaContext.fillStyle = SPOTAREA_COLORS[mapObject['mapSpotAreas'][areaIndex]['mapSpotAreaID'] % SPOTAREA_COLORS.length];
                     areaContext.fill();
+                    areaContext.strokeStyle = '#64b5f6';
+                    areaContext.stroke();
                 }
             }
             finalContext.drawImage(areaCanvas, 0, 0, this.mapTotalWidth, this.mapTotalHeight);
@@ -407,7 +383,7 @@ class EcovacsMapImage extends EcovacsMapImageBase {
             try {
                 await this.initCanvas();
             } catch (e) {
-                tools.envLog(`[EcovacsMapImage] initCanvas failed: ${e.message}`);
+                tools.envLogInfo(`[EcovacsMapImage] initCanvas failed: ${e.message}`);
             }
         })();
     }
@@ -441,170 +417,6 @@ class EcovacsMapImage extends EcovacsMapImageBase {
     }
 }
 
-class EcovacsMap {
-    constructor(mapID, mapIndex, mapName, mapStatus, mapIsCurrentMap = 1, mapIsBuilt = 1) {
-        this.mapID = mapID;
-        this.mapIndex = mapIndex;
-        this.mapName = mapName;
-        this.mapStatus = mapStatus;
-        this.mapIsCurrentMap = Number(mapIsCurrentMap) === 1;
-        this.mapIsBuilt = Number(mapIsBuilt) === 1;
-    }
-
-    toJSON() {
-        return {
-            mapID: this.mapID,
-            mapIndex: this.mapIndex,
-            mapName: this.mapName,
-            mapStatus: this.mapStatus,
-            mapIsCurrentMap: this.mapIsCurrentMap,
-            mapIsBuilt: this.mapIsBuilt
-        };
-    }
-}
-
-class EcovacsMapSpotAreas {
-    constructor(mapID, mapSetID) {
-        this.mapID = mapID;
-        this.mapSetID = mapSetID;
-        this.mapSpotAreas = [];
-    }
-
-    push(mapSpotArea) {
-        this.mapSpotAreas.push(mapSpotArea);
-    }
-
-    toJSON() {
-        return {
-            mapID: this.mapID,
-            mapSetID: this.mapSetID,
-            mapSpotAreas: this.mapSpotAreas
-        };
-    }
-}
-
-class EcovacsMapSpotArea {
-    constructor(mapSpotAreaID) {
-        this.mapSpotAreaID = mapSpotAreaID;
-    }
-
-    toJSON() {
-        return {
-            mapSpotAreaID: this.mapSpotAreaID
-        };
-    }
-}
-
-class EcovacsMapSpotAreaInfo {
-    constructor(mapID, mapSpotAreaID, mapSpotAreaConnections, mapSpotAreaBoundaries, mapSubType = '0', customName = '') {
-        this.mapID = mapID;
-        this.mapSpotAreaID = mapSpotAreaID;
-        if (customName !== '') {
-            this.mapSpotAreaName = customName;
-        } else if ((mapSubType === '0') || !SPOTAREA_SUBTYPES[mapSubType]) {
-            // if default naming or ID not found in list of names
-            // return character representation (0=A, 1=B, etc.)
-            this.mapSpotAreaName = String.fromCharCode(65 + parseInt(mapSpotAreaID));
-        } else {
-            this.mapSpotAreaName = SPOTAREA_SUBTYPES[mapSubType]; //#LANG#
-        }
-        this.mapSpotAreaConnections = mapSpotAreaConnections;
-        this.mapSpotAreaBoundaries = mapSpotAreaBoundaries;
-        this.mapSpotAreaCanvas = createCanvasFromCoordinates(mapSpotAreaBoundaries);
-        this.mapSpotAreaSubType = mapSubType;
-    }
-
-    toJSON() {
-        return {
-            mapID: this.mapID,
-            mapSpotAreaID: this.mapSpotAreaID,
-            mapSpotAreaName: this.mapSpotAreaName,
-            mapSpotAreaConnections: this.mapSpotAreaConnections,
-            mapSpotAreaBoundaries: this.mapSpotAreaBoundaries,
-            mapSpotAreaSubType: this.mapSpotAreaSubType
-        };
-    }
-}
-
-class EcovacsMapVirtualBoundaries {
-    constructor(mapID) {
-        this.mapID = mapID;
-        this.mapVirtualWalls = [];
-        this.mapNoMopZones = [];
-    }
-
-    push(mapVirtualBoundary, mapVirtualBoundaryType = 'vw') {
-        if (mapVirtualBoundaryType === 'vw') {
-            this.mapVirtualWalls.push(mapVirtualBoundary);
-        } else if (mapVirtualBoundaryType === 'mw') {
-            this.mapNoMopZones.push(mapVirtualBoundary);
-        }
-    }
-
-    toJSON() {
-        return {
-            mapID: this.mapID,
-            mapVirtualWalls: this.mapVirtualWalls,
-            mapNoMopZones: this.mapNoMopZones
-        };
-    }
-}
-
-class EcovacsMapVirtualBoundary {
-    constructor(mapVirtualBoundaryID, mapVirtualBoundaryType) {
-        this.mapVirtualBoundaryID = mapVirtualBoundaryID;
-        this.mapVirtualBoundaryType = mapVirtualBoundaryType;
-    }
-
-    toJSON() {
-        return {
-            mapVirtualBoundaryID: this.mapVirtualBoundaryID,
-            mapVirtualBoundaryType: this.mapVirtualBoundaryType
-        };
-    }
-}
-
-class EcovacsMapVirtualBoundaryInfo {
-    constructor(mapID, mapVirtualBoundaryID, mapVirtualBoundaryType, mapVirtualBoundaryCoordinates) {
-        this.mapID = mapID;
-        this.mapVirtualBoundaryID = mapVirtualBoundaryID;
-        this.mapVirtualBoundaryType = mapVirtualBoundaryType;
-        this.mapVirtualBoundaryCoordinates = mapVirtualBoundaryCoordinates;
-    }
-
-    toJSON() {
-        return {
-            mapID: this.mapID,
-            mapVirtualBoundaryID: this.mapVirtualBoundaryID,
-            mapVirtualBoundaryType: this.mapVirtualBoundaryType,
-            mapVirtualBoundaryCoordinates: this.mapVirtualBoundaryCoordinates
-        };
-    }
-}
-
-function createCanvasFromCoordinates(coordinates, width = 100, height = 100) {
-    if (!tools.isCanvasModuleAvailable()) {
-        return null;
-    }
-    let coordinateArray = coordinates.split(';');
-
-    const {createCanvas} = require('canvas');
-    const canvas = createCanvas(width, height);
-    const ctx = canvas.getContext('2d');
-    ctx.beginPath();
-    for (let i = 0; i < coordinateArray.length; i++) {
-        let xi = coordinateArray[i].split(',')[0];
-        let yi = coordinateArray[i].split(',')[1];
-        if (i === 0) {
-            ctx.moveTo(xi, yi);
-        } else {
-            ctx.lineTo(xi, yi);
-        }
-    }
-    ctx.closePath();
-    return canvas;
-}
-
 // converts the compressed data retrieved from ecovacs API into int array containing the map pixels
 // thanks to https://gitlab.com/michael.becker/vacuumclean/-/blob/master/deebot/deebot-core/README.md#map-details
 async function mapPieceToIntArray(pieceValue) {
@@ -629,64 +441,6 @@ function getRotatedCanvasFromImage(image, angle) {
     return rotatedCanvas;
 }
 
-function getMapObject(mapDataObject, mapID) {
-    if (mapDataObject) {
-        return mapDataObject.find((map) => {
-            return map.mapID === mapID;
-        });
-    }
-    return null;
-}
-
-function getCurrentMapObject(mapDataObject) {
-    if (mapDataObject) {
-        return mapDataObject.find((map) => {
-            return map.mapIsCurrentMap === true;
-        });
-    }
-    return null;
-}
-
-function getSpotAreaObject(mapDataObject, mapID, spotAreaID) {
-    if (mapDataObject) {
-        const mapSpotAreasObject = mapDataObject.find((map) => {
-            return map.mapID === mapID;
-        }).mapSpotAreas;
-        if (mapSpotAreasObject) {
-            return mapSpotAreasObject.find((spotArea) => {
-                return spotArea.mapSpotAreaID === spotAreaID;
-            });
-        }
-    }
-    return null;
-}
-
-function getVirtualBoundaryObject(mapDataObject, mapID, virtualBoundaryID) {
-    if (mapDataObject) {
-        const mapVirtualBoundariesObject = mapDataObject.find((map) => {
-            return map.mapID === mapID;
-        }).mapVirtualBoundaries;
-        if (mapVirtualBoundariesObject) {
-            return mapVirtualBoundariesObject.find((virtualBoundary) => {
-                return virtualBoundary.mapVirtualBoundaryID === virtualBoundaryID;
-            });
-        }
-    }
-    return null;
-}
-
-module.exports.EcovacsMap = EcovacsMap;
-module.exports.EcovacsMapImage = EcovacsMapImage;
 module.exports.EcovacsLiveMapImage = EcovacsLiveMapImage;
-module.exports.EcovacsMapSpotAreas = EcovacsMapSpotAreas;
-module.exports.EcovacsMapSpotArea = EcovacsMapSpotArea;
-module.exports.EcovacsMapSpotAreaInfo = EcovacsMapSpotAreaInfo;
-module.exports.EcovacsMapVirtualBoundaries = EcovacsMapVirtualBoundaries;
-module.exports.EcovacsMapVirtualBoundary = EcovacsMapVirtualBoundary;
-module.exports.EcovacsMapVirtualBoundaryInfo = EcovacsMapVirtualBoundaryInfo;
-module.exports.getMapObject = getMapObject;
-module.exports.getCurrentMapObject = getCurrentMapObject;
-module.exports.getSpotAreaObject = getSpotAreaObject;
-module.exports.getVirtualBoundaryObject = getVirtualBoundaryObject;
+module.exports.EcovacsMapImage = EcovacsMapImage;
 module.exports.mapPieceToIntArray = mapPieceToIntArray;
-module.exports.mapDataObject = mapDataObject;

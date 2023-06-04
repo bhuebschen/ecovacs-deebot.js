@@ -13,14 +13,18 @@ exports.CLEAN_MODE_TO_ECOVACS = {
     'mapPoint': 'mapPoint',
     'singlePoint': 'singlePoint',
     'area': 'area',
-    'move': 'move'
+    'move': 'move',
+    'drying': 'drying',
+    'washing': 'washing',
+    'comeClean': 'comeClean',
+    'entrust': 'entrust'
 };
 
 exports.CLEAN_ACTION_TO_ECOVACS = {
     'start': 'start',
     'pause': 'pause',
     'resume': 'resume',
-    'stop': 'stop',
+    'stop': 'stop'
 };
 
 exports.CLEAN_MODE_FROM_ECOVACS = {
@@ -34,20 +38,17 @@ exports.CLEAN_MODE_FROM_ECOVACS = {
     'idle': 'idle',
     'move': 'move',
     'singlePoint': 'singlePoint',
-    'area': 'area'
+    'area': 'area',
+    'drying': 'drying',
+    'washing': 'washing',
+    'comeClean': 'comeClean',
+    'entrust': 'entrust'
 };
 
 exports.GOCHARGING_REASONS = {
     'workComplete': 'workComplete',
     'cleaningCloth': 'cleaningCloth',
     'none': 'none'
-};
-
-exports.WATER_LEVEL_TO_ECOVACS = {
-    1: 1,     //low
-    2: 2,     //middle
-    3: 3,     //high
-    4: 4      //very high
 };
 
 exports.CLEAN_SPEED_TO_ECOVACS = {
@@ -75,7 +76,8 @@ exports.COMPONENT_TO_ECOVACS = {
     'side_brush': 'sideBrush',
     'filter': 'heap',
     'unit_care': 'unitCare',
-    'round_mop': 'roundMop'
+    'round_mop': 'roundMop',
+    'air_freshener': 'dModule'
 };
 
 exports.COMPONENT_FROM_ECOVACS = {
@@ -83,7 +85,8 @@ exports.COMPONENT_FROM_ECOVACS = {
     'sideBrush': 'side_brush',
     'heap': 'filter',
     'unitCare': 'unit_care',
-    'roundMop': 'round_mop'
+    'roundMop': 'round_mop',
+    'dModule': 'air_freshener'
 };
 
 exports.MOVE_ACTION = {

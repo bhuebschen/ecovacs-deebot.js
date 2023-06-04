@@ -12,14 +12,14 @@ const MAPINFOTYPE_TO_ECOVACS = {
 };
 
 class VacBotCommand {
-    constructor(name, args = {}, api = constants.IOT_DEVMANAGER_PATH) {
+    constructor(name, payload = {}, api = constants.IOT_DEVMANAGER_PATH) {
         this.name = name;
-        if (!args.hasOwnProperty('id')) {
-            Object.assign(args, {
+        if (!payload.hasOwnProperty('id')) {
+            Object.assign(payload, {
                 'id': tools.getReqID()
             });
         }
-        this.args = args;
+        this.args = payload;
         this.api = api;
     }
 
@@ -30,35 +30,40 @@ class VacBotCommand {
 
 class Clean extends VacBotCommand {
     constructor(mode = 'auto', action = 'start', kwargs = {}) {
-        let initCmd = {
-            'type': constants_type.CLEAN_MODE_TO_ECOVACS[mode],
-            'act': constants_type.CLEAN_ACTION_TO_ECOVACS[action]
+        let payload = {
+            "act": constants_type.CLEAN_ACTION_TO_ECOVACS[action],
+            "count": 1,
+            "donotClean": 0,
+            "router": "plan",
+            "type": constants_type.CLEAN_MODE_TO_ECOVACS[mode]
         };
         for (let key in kwargs) {
             if (kwargs.hasOwnProperty(key)) {
-                initCmd[key] = kwargs[key];
+                payload[key] = kwargs[key];
             }
         }
-        tools.envLog('initCmd %s', initCmd);
-        super('clean', initCmd);
+        super('clean', payload);
     }
 }
 
 class Clean_V2 extends VacBotCommand {
     constructor(mode = 'auto', action = 'start', kwargs = {}) {
-        let initCmd = {
-            'act': constants_type.CLEAN_ACTION_TO_ECOVACS[action],
-            'content': {
-                'type': constants_type.CLEAN_MODE_TO_ECOVACS[mode],
-            }
+        let payload = {
+            "act": constants_type.CLEAN_ACTION_TO_ECOVACS[action],
+            "content": {
+                "count": 1,
+                "donotClean": "",
+                'type': constants_type.CLEAN_MODE_TO_ECOVACS[mode]
+            },
+            "mode": "",
+            "router": "plan"
         };
         for (let key in kwargs) {
             if (kwargs.hasOwnProperty(key)) {
-                Object.assign(initCmd[key], kwargs[key]);
+                Object.assign(payload[key], kwargs[key]);
             }
         }
-        tools.envLog('initCmd %s', initCmd);
-        super('clean_V2', initCmd);
+        super('clean_V2', payload);
     }
 }
 
@@ -73,6 +78,13 @@ class Spot extends Clean {
         super('spot', 'start', {
             'content': '0,0'
         });
+    }
+}
+
+// "Hosted mode" Ecovacs Deebot X1 series
+class HostedCleanMode extends Clean_V2 {
+    constructor() {
+        super('entrust', 'start');
     }
 }
 
@@ -91,8 +103,6 @@ class SpotArea_V2 extends Clean_V2 {
         let cleaningAsNumber = Number(cleanings);
         super('spotArea', 'start', {
             'content': {
-                'total': 0,
-                'donotClean': 0,
                 'count': cleaningAsNumber,
                 'value': area
             }
@@ -281,12 +291,24 @@ class SetCleanSpeed extends VacBotCommand {
 }
 
 class SetWaterLevel extends VacBotCommand {
-    constructor(level) {
-        if (constants_type.WATER_LEVEL_TO_ECOVACS.hasOwnProperty(level)) {
-            level = constants_type.WATER_LEVEL_TO_ECOVACS[level];
-        }
-        super('setWaterInfo', {
+    constructor(level, sweepType = 0) {
+        const payload = {
             'amount': level
+        };
+        if ((sweepType === 1) || (sweepType === 2)) {
+            Object.assign(payload, {'sweepType': sweepType});
+        }
+        super('setWaterInfo', payload);
+    }
+}
+
+/*
+Sets the sweep mode for X1 series
+ */
+class SetCustomAreaMode extends VacBotCommand {
+    constructor(sweepMode = 0) {
+        super('setCustomAreaMode', {
+            'sweepMode': sweepMode
         });
     }
 }
@@ -330,7 +352,26 @@ class GetMajorMap extends VacBotCommand {
     }
 }
 
-class GetMapImage extends VacBotCommand {
+class GetMinorMap extends VacBotCommand {
+    constructor(mid, pieceIndex, type = 'ol') {
+        super('getMinorMap', {
+            'mid': mid,
+            'pieceIndex': pieceIndex,
+            'type': type
+        });
+    }
+}
+
+class GetMapTrace extends VacBotCommand {
+    constructor(traceStart = 0, pointCount = 400) {
+        super('getMapTrace', {
+            'traceStart': traceStart,
+            'pointCount': pointCount
+        });
+    }
+}
+
+class GetMapInfo extends VacBotCommand {
     constructor(mapID, mapType = 'outline') {
         if (MAPINFOTYPE_TO_ECOVACS.hasOwnProperty(mapType)) {
             mapType = MAPINFOTYPE_TO_ECOVACS[mapType];
@@ -342,7 +383,8 @@ class GetMapImage extends VacBotCommand {
     }
 }
 
-class GetMapInfo_V2 extends VacBotCommand {
+// yeedi Mop Station
+class GetMapInfo_V2_Yeedi extends VacBotCommand {
     constructor(mapType = '0') {
         super('getMapInfo_V2', {
             'type': mapType
@@ -350,7 +392,17 @@ class GetMapInfo_V2 extends VacBotCommand {
     }
 }
 
-class GetMaps extends VacBotCommand {
+// Ecovacs Deebot X1
+class GetMapInfo_V2 extends VacBotCommand {
+    constructor(mapID, type = '0') {
+        super('getMapInfo_V2', {
+            'mid': mapID,
+            'type': type
+        });
+    }
+}
+
+class GetCachedMapInfo extends VacBotCommand {
     constructor() {
         super('getCachedMapInfo');
     }
@@ -365,13 +417,46 @@ class GetMapSet extends VacBotCommand {
     }
 }
 
+class GetMapSet_V2 extends VacBotCommand {
+    constructor(mapID, type = 'ar') {
+        super('getMapSet_V2', {
+            'mid': mapID,
+            'type': type
+        });
+    }
+}
+
+// Not yet used and untested
+class SetMapSet extends VacBotCommand {
+    constructor(mapID, subsets, act = 'merge') {
+        super('setMapSet', {
+            'mid': mapID,
+            'subsets': subsets,
+            'act': act,
+            'type': 'ar'
+        });
+    }
+}
+
 class GetMapSpotAreas extends GetMapSet {
     constructor(mapID) {
         super(mapID, 'ar');
     }
 }
 
+class GetMapSpotAreas_V2 extends GetMapSet_V2 {
+    constructor(mapID) {
+        super(mapID, 'ar');
+    }
+}
+
 class GetMapVirtualBoundaries extends GetMapSet {
+    constructor(mapID, mapVirtualBoundaryType = 'vw') {
+        super(mapID, mapVirtualBoundaryType);
+    }
+}
+
+class GetMapVirtualBoundaries_V2 extends GetMapSet_V2 {
     constructor(mapID, mapVirtualBoundaryType = 'vw') {
         super(mapID, mapVirtualBoundaryType);
     }
@@ -442,12 +527,6 @@ class GetSleepStatus extends VacBotCommand {
 class GetCleanLogs extends VacBotCommand {
     constructor(count = 3) {
         super('GetCleanLogs', {'count': count}, constants.CLEANLOGS_PATH);
-    }
-}
-
-class GetLastCleanLog extends VacBotCommand {
-    constructor() {
-        super('GetLastCleanLog', {}, constants.CLEANLOGS_PATH);
     }
 }
 
@@ -573,6 +652,14 @@ class GetSchedule extends VacBotCommand {
     }
 }
 
+class GetSchedule_V2 extends VacBotCommand {
+    constructor() {
+        super('getSched_V2', {
+            type: 1
+        });
+    }
+}
+
 class GetDusterRemind extends VacBotCommand {
     constructor() {
         super('getDusterRemind');
@@ -630,12 +717,46 @@ class GetCleanPreference extends VacBotCommand {
     }
 }
 
+class GetAICleanItemState extends VacBotCommand {
+    constructor() {
+        super('getAICleanItemState');
+    }
+}
+
 class GetAirDrying extends VacBotCommand {
     constructor() {
         super('getAirDring');
     }
 }
 
+class GetStationState extends VacBotCommand {
+    constructor() {
+        super('getStationState');
+    }
+}
+
+class GetStationInfo extends VacBotCommand {
+    constructor() {
+        super('getStationInfo');
+    }
+}
+
+class GetWashInterval extends VacBotCommand {
+    constructor() {
+        super('getWashInterval');
+    }
+}
+
+class SetWashInterval extends VacBotCommand {
+    constructor(interval = 10) {
+        super('setWashInterval', {
+            interval: interval
+        });
+    }
+}
+
+// Air Drying
+// Yeedi Mop Station
 class SetAirDrying extends VacBotCommand {
     constructor(act = 'stop') {
         super('setAirDring', {
@@ -644,10 +765,34 @@ class SetAirDrying extends VacBotCommand {
     }
 }
 
-// TODO: Handle response data
+class Washing extends Clean_V2 {
+    constructor(action = 'stop') {
+        super('washing', action);
+    }
+}
+
+// Air Drying
+// Ecovacs Deebot X1 series
+class Drying extends VacBotCommand {
+    constructor(act) {
+        super('stationAction', {
+            "act": act,
+            "type": 2
+        });
+    }
+}
+
 class GetRecognization extends VacBotCommand {
     constructor() {
         super('getRecognization');
+    }
+}
+
+class SetRecognization extends VacBotCommand {
+    constructor(state = 0) {
+        super('setRecognization', {
+            'state': state
+        });
     }
 }
 
@@ -658,12 +803,56 @@ class GetMapState extends VacBotCommand {
     }
 }
 
+class GetMultiMapState extends VacBotCommand {
+    constructor() {
+        super('getMultiMapState');
+    }
+}
+
 // TODO: Handle response data
 class GetAIMap extends VacBotCommand {
     constructor() {
         super('getAIMap', {
             'pointCount': 1,
             'pointStart': 0
+        });
+    }
+}
+
+class GetBorderSpin extends VacBotCommand {
+    constructor() {
+        super('getBorderSpin');
+    }
+}
+
+class SetBorderSpin extends VacBotCommand {
+    constructor(enable = 0) {
+        super('setBorderSpin', {
+            'enable': enable,
+            'type': 1
+        });
+    }
+}
+
+class GetSweepMode extends VacBotCommand {
+    constructor() {
+        super('getSweepMode');
+    }
+}
+
+class GetCustomAreaMode extends VacBotCommand {
+    constructor() {
+        super('getCustomAreaMode');
+    }
+}
+
+/*
+Sets the sweep only mode for e.g. X1 series
+ */
+class SetSweepMode extends VacBotCommand {
+    constructor(type = 0) {
+        super('setSweepMode', {
+            'type': type
         });
     }
 }
@@ -743,18 +932,10 @@ class SetBlueSpeaker extends VacBotCommand {
     }
 }
 
-class GetMapSet_V2 extends VacBotCommand {
-    constructor(mapID, type = 'ar') {
-        super('getMapSet_V2', {
-            'mid': mapID,
-            'type': type
-        });
-    }
-}
-
 class SetMapSet_V2 extends VacBotCommand {
-    constructor(mapArray) {
+    constructor(mapID, mapArray) {
         super('setMapSet_V2', {
+            mid: mapID,
             subsets: mapArray
         });
     }
@@ -798,14 +979,6 @@ class SetBlock extends VacBotCommand {
             'enable': enable,
             'start': start,
             'end': end
-        });
-    }
-}
-
-class GetPos extends VacBotCommand {
-    constructor(objects = ['chargePos', 'deebotPos']) {
-        super('getPos', {
-            objects
         });
     }
 }
@@ -918,6 +1091,12 @@ class GetVoiceLifeRemindState extends VacBotCommand {
     }
 }
 
+class GetVoiceAssistantState extends VacBotCommand {
+    constructor() {
+        super('getVoiceAssistantState');
+    }
+}
+
 class SetVoiceAssistantState extends VacBotCommand {
     constructor(enable = 0) {
         super('setVoiceAssistantState', {
@@ -965,6 +1144,8 @@ class GetMapTrace_V2 extends VacBotCommand {
     }
 }
 
+module.exports.Generic = VacBotCommand;
+
 module.exports.AddMapVirtualBoundary = AddMapVirtualBoundary;
 module.exports.Charge = Charge;
 module.exports.Clean = Clean;
@@ -974,15 +1155,19 @@ module.exports.CustomArea_V2 = CustomArea_V2;
 module.exports.DeleteMapVirtualBoundary = DeleteMapVirtualBoundary;
 module.exports.DisableContinuousCleaning = DisableContinuousCleaning;
 module.exports.DisableDoNotDisturb = DisableDoNotDisturb;
+module.exports.Drying = Drying;
 module.exports.Edge = Edge;
 module.exports.EmptyDustBin = EmptyDustBin;
 module.exports.EnableContinuousCleaning = EnableContinuousCleaning;
 module.exports.EnableDoNotDisturb = EnableDoNotDisturb;
+module.exports.GetAICleanItemState = GetAICleanItemState;
 module.exports.GetAIMap = GetAIMap;
 module.exports.GetAdvancedMode = GetAdvancedMode;
 module.exports.GetAirDrying = GetAirDrying;
 module.exports.GetAutoEmpty = GetAutoEmpty;
 module.exports.GetBatteryState = GetBatteryState;
+module.exports.GetBorderSpin = GetBorderSpin;
+module.exports.GetCachedMapInfo = GetCachedMapInfo;
 module.exports.GetCarpetPressure = GetCarpetPressure;
 module.exports.GetChargeState = GetChargeState;
 module.exports.GetCleanCount = GetCleanCount;
@@ -993,29 +1178,43 @@ module.exports.GetCleanState = GetCleanState;
 module.exports.GetCleanState_V2 = GetCleanState_V2;
 module.exports.GetCleanSum = GetCleanSum;
 module.exports.GetContinuousCleaning = GetContinuousCleaning;
+module.exports.GetCustomAreaMode = GetCustomAreaMode;
 module.exports.GetDoNotDisturb = GetDoNotDisturb;
 module.exports.GetDusterRemind = GetDusterRemind;
 module.exports.GetError = GetError;
-module.exports.GetLastCleanLog = GetLastCleanLog;
 module.exports.GetLifeSpan = GetLifeSpan;
 module.exports.GetMajorMap = GetMajorMap;
-module.exports.GetMapImage = GetMapImage;
+module.exports.GetMapInfo = GetMapInfo;
 module.exports.GetMapInfo_V2 = GetMapInfo_V2;
+module.exports.GetMapInfo_V2_Yeedi = GetMapInfo_V2_Yeedi;
 module.exports.GetMapSet = GetMapSet;
+module.exports.GetMapSet_V2 = GetMapSet_V2;
 module.exports.GetMapSpotAreaInfo = GetMapSpotAreaInfo;
 module.exports.GetMapSpotAreas = GetMapSpotAreas;
+module.exports.GetMapSpotAreas_V2 = GetMapSpotAreas_V2;
 module.exports.GetMapState = GetMapState;
+module.exports.GetMapTrace_V2 = GetMapTrace_V2;
 module.exports.GetMapVirtualBoundaries = GetMapVirtualBoundaries;
+module.exports.GetMapVirtualBoundaries_V2 = GetMapVirtualBoundaries_V2;
 module.exports.GetMapVirtualBoundaryInfo = GetMapVirtualBoundaryInfo;
-module.exports.GetMaps = GetMaps;
+module.exports.GetMapTrace = GetMapTrace;
+module.exports.GetMinorMap = GetMinorMap;
+module.exports.GetMultiMapState = GetMultiMapState;
 module.exports.GetNetInfo = GetNetInfo;
 module.exports.GetPosition = GetPosition;
 module.exports.GetRecognization = GetRecognization;
 module.exports.GetSchedule = GetSchedule;
+module.exports.GetSchedule_V2 = GetSchedule_V2;
 module.exports.GetSleepStatus = GetSleepStatus;
+module.exports.GetStationState = GetStationState;
+module.exports.GetStationInfo = GetStationInfo;
+module.exports.GetSweepMode = GetSweepMode;
 module.exports.GetTrueDetect = GetTrueDetect;
 module.exports.GetVolume = GetVolume;
+module.exports.GetWashInterval = GetWashInterval;
 module.exports.GetWaterInfo = GetWaterInfo;
+module.exports.GetVoiceAssistantState = GetVoiceAssistantState;
+module.exports.HostedCleanMode = HostedCleanMode;
 module.exports.MapPoint_V2 = MapPoint_V2;
 module.exports.Move = Move;
 module.exports.MoveBackward = MoveBackward;
@@ -1031,19 +1230,28 @@ module.exports.Resume = Resume;
 module.exports.SetAdvancedMode = SetAdvancedMode;
 module.exports.SetAirDrying = SetAirDrying;
 module.exports.SetAutoEmpty = SetAutoEmpty;
+module.exports.SetBorderSpin = SetBorderSpin;
 module.exports.SetCarpetPressure = SetCarpetPressure;
 module.exports.SetCleanCount = SetCleanCount;
 module.exports.SetCleanPreference = SetCleanPreference;
 module.exports.SetCleanSpeed = SetCleanSpeed;
+module.exports.SetCustomAreaMode = SetCustomAreaMode;
 module.exports.SetDoNotDisturb = SetDoNotDisturb;
 module.exports.SetDusterRemind = SetDusterRemind;
+module.exports.SetMapSet = SetMapSet;
+module.exports.SetMapSet_V2 = SetMapSet_V2;
+module.exports.SetRecognization = SetRecognization;
+module.exports.SetSweepMode = SetSweepMode;
 module.exports.SetTrueDetect = SetTrueDetect;
+module.exports.SetVoiceAssistantState = SetVoiceAssistantState;
 module.exports.SetVolume = SetVolume;
+module.exports.SetWashInterval = SetWashInterval;
 module.exports.SetWaterLevel = SetWaterLevel;
 module.exports.Spot = Spot;
 module.exports.SpotArea = SpotArea;
 module.exports.SpotArea_V2 = SpotArea_V2;
 module.exports.Stop = Stop;
+module.exports.Washing = Washing;
 
 // Air Purifier (e.g. AIRBOT Z1)
 module.exports.Area_V2 = Area_V2;
@@ -1057,8 +1265,6 @@ module.exports.GetDrivingWheel = GetDrivingWheel;
 module.exports.GetHumanoidFollow = GetHumanoidFollow;
 module.exports.GetListenMusic = GetListenMusic;
 module.exports.GetLiveLaunchPwdState = GetLiveLaunchPwdState;
-module.exports.GetMapSet_V2 = GetMapSet_V2;
-module.exports.GetMapTrace_V2 = GetMapTrace_V2;
 module.exports.GetMonitorAirState = GetMonitorAirState;
 module.exports.GetOta = GetOta;
 module.exports.GetRelocationState = GetRelocationState;
@@ -1076,13 +1282,11 @@ module.exports.SetBlock = SetBlock;
 module.exports.SetBlueSpeaker = SetBlueSpeaker;
 module.exports.SetFreshenerLevel = SetFreshenerLevel;
 module.exports.SetHumidifierLevel = SetHumidifierLevel;
-module.exports.SetMapSet_V2 = SetMapSet_V2;
 module.exports.SetMic = SetMic;
 module.exports.SetMonitorAirState = SetMonitorAirState;
 module.exports.SetThreeModule = SetThreeModule;
 module.exports.SetUVCleaner = SetUVCleaner;
 module.exports.SetVoice = SetVoice;
-module.exports.SetVoiceAssistantState = SetVoiceAssistantState;
 module.exports.SetVoiceSimple = SetVoiceSimple;
 module.exports.SinglePoint_V2 = SinglePoint_V2;
 module.exports.VideoOpened = VideoOpened;

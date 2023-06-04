@@ -15,7 +15,7 @@ Library for running Ecovacs Deebot (and also some yeedi) vacuum cleaner robots
 
 Information on how to install this library can be found [here](https://github.com/mrbungle64/ecovacs-deebot.js/wiki/Installation).
 
-The minimum required version of Node.js is 14.x. It is recommended to use version 14.x or 16.x
+The minimum required version of Node.js is 14.x. It is recommended to use version 16.x or 18.x
 
 ## Usage
 
@@ -28,7 +28,8 @@ Information on how to use this library can be found [here](https://github.com/mr
 The fully supported models are those that I own myself:
 
 * Deebot OZMO 920
-* Deebot T8 AIVI
+* Deebot OZMO T8 AIVI
+* Deebot X1 Turbo
 
 ### Other supported models
 
@@ -54,6 +55,8 @@ There is of course no claim to full functionality.
 * yeedi k650
 * yeedi 2 hybrid
 * yeedi vac hybrid
+* yeedi vac max
+* yeedi vac 2 pro
 * yeedi mop station
 
 #### Ecovacs Airbot (experimental)
@@ -81,15 +84,40 @@ I also don't use my Slim 2, Deebot 901 and OZMO 930 anymore.
 
 ## Known issues
 
-* The generation of map images is currently not stable on 32-bit systems (e.g. most Raspberry Pi systems)
+* The generation of map images may not be stable on 32-bit systems (e.g. most Raspberry Pi systems)
 * The "Edge" command does not work with Deebot U2 (starts auto clean instead)
 * The "Move" commands do not work with Deebot OZMO T8 AIVI (and maybe also for some other models)
-* The cleaning log has an empty result on T9 series
 * The generation of map image data does not work properly with the Deebot X1 series
 
 ## Changelog
 
-### 0.9.1 (beta)
+### 0.9.6 (alpha)
+* Added some new models (incl. GOAT, T20 OMNI)
+* Added shortcut commands for sweep mode
+* Some improvements and fixes
+
+### 0.9.5
+* Added GoToPosition shortcut function (e.g. T8, T9 and X1 series)
+* Fix AirDryingStart and AirDryingStop commands
+
+### 0.9.4
+* Fix API call for countries with continent "WW"
+
+### 0.9.3
+* Switched to new endpoint for ecouser API
+* Added several commands and events for X1 series (and also maybe other models)
+  * e.g. HostedCleanMode, StationState, Washing, Drying, WashIntervalState, AICleanItemState
+* Several other improvements and optimizations
+  * e.g. added air freshener life span component and the Generic command
+
+### 0.9.2
+* Some improvements for auto empty station, dnd mode, cleaning logs, mopping modes
+* Handle cleaning incoming sequence and preference for each spot area
+* Improved disconnecting from the MQTT server
+* Improved logging (dev environment)
+* Some other improvements and fixes
+
+### 0.9.1
 * (bhuebschen) Added some commands for T9 series and yeedi mop station
 * (bhuebschen) Implemented cleaning log call for T9 based models
 * (bhuebschen) Added numerous commands for AIRBOT Z1 (Air Purifier)
@@ -98,7 +126,7 @@ I also don't use my Slim 2, Deebot 901 and OZMO 930 anymore.
 
 ### 0.9.0
 * Breaking change: Bump minimum required version of Node.js to 14.x
-* (apfelnutzer) Added handling for the air drying message
+* (apfelnutzer) Added handling for the air drying message (yeedi Mop Station)
 * Bugfix issue #219
 * Added some error codes
 * Bump dependencies (incl. fix for CVE-2022-39353)
@@ -177,10 +205,10 @@ He documented his [findings on the protocol](http://github.com/wpietri/sucks/blo
 
 ## Disclaimer
 
-I am in no way affiliated with ECOVACS.
+I am in no way affiliated with Ecovacs Robotics Co., Ltd. or yeedi Technology Limited.
 
 ## License
 
 GNU GENERAL PUBLIC LICENSE
 
-Copyright (c) 2022 Sascha Hölzel <mrb1232@posteo.de>
+Copyright (c) 2023 Sascha Hölzel <mrb1232@posteo.de>

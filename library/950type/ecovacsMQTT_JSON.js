@@ -70,7 +70,7 @@ class EcovacsMQTT_JSON extends EcovacsMQTT {
             } else if (command.api === constants.CLEANLOGS_PATH) {
                 this.handleMessage(command.name, messagePayload, "logResponse");
             } else {
-                tools.envLog("[EcovacsMQTT_JSON] handleCommandResponse() invalid response");
+                tools.envLogWarn(`handleCommandResponse invalid response`);
             }
         }
     }
@@ -83,20 +83,30 @@ class EcovacsMQTT_JSON extends EcovacsMQTT {
      */
     handleMessage(topic, message, type = "incoming") {
         let eventName = topic;
-        let resultCode = "0";
+        let resultCode = 0;
         let resultCodeMessage = "ok";
         let payload = message;
-
         if (type === "incoming") {
             eventName = topic.split('/')[2];
             message = JSON.parse(message);
+            tools.envLogMqtt(topic);
+            tools.envLogMqtt(eventName);
             if (message['body'] && message['body']['data']) {
                 payload = message['body']['data'];
+                tools.envLogPayload(payload);
+            } else if (message['body']) {
+                payload = message['body'];
+                tools.envLogPayload(payload);
+            } else {
+                tools.envLogWarn('Unhandled MQTT message payload ...')
+                tools.envLogPayload(payload);
+                return;
             }
         } else if (type === "response") {
             resultCode = message['body']['code'];
             resultCodeMessage = message['body']['msg'];
             payload = message['body']['data'];
+            tools.envLogPayload(payload);
             if (message['header']) {
                 const header = message['header'];
                 if (this.vacBot.firmwareVersion !== header['fwVer']) {
@@ -108,50 +118,59 @@ class EcovacsMQTT_JSON extends EcovacsMQTT {
                 }
             }
         } else if (type === "logResponse") {
+            tools.envLogInfo(`got message with type 'logResponse'`);
+            tools.envLogPayload(message);
             resultCodeMessage = message['ret'];
         }
 
-        const result = {
-            "resultCode": resultCode,
-            "resultCodeMessage": resultCodeMessage,
-            "payload": payload
-        };
-
-        (async () => {
-            try {
-                await this.handleMessagePayload(eventName, result);
-            } catch (e) {
-                this.emitError('-2', e.message);
-            }
-        })();
+        if ((payload !== undefined) && (resultCode === 0)) {
+            (async () => {
+                try {
+                    await this.handleMessagePayload(eventName, payload);
+                } catch (e) {
+                    this.emitError('-2', e.message);
+                }
+            })();
+        } else if (resultCode != 0) {
+            tools.envLogError(`got unexpected resultCode for command '${eventName}': ${resultCode}`);
+            tools.envLogError(`resultCodeMessage for command '${eventName}': '${resultCodeMessage}`);
+            return;
+        } else if (payload === undefined) {
+            tools.envLogWarn(`got empty payload for command '${eventName}'`);
+            return;
+        } else {
+            tools.envLogError(`something unexpected happend for command '${eventName}'`);
+        }
     }
 
     /**
      * Handles the message command and the payload
      * and delegates the event object to the corresponding method
      * @param {string} command - the incoming message command
-     * @param {Object} event - the event object received from the Ecovacs API
      * @returns {Promise<void>}
      */
-    async handleMessagePayload(command, event) {
+    async handleMessagePayload(command, payload) {
         let abbreviatedCommand = command.replace(/^_+|_+$/g, '');
         const commandPrefix = this.getCommandPrefix(abbreviatedCommand);
         abbreviatedCommand = abbreviatedCommand.substring(commandPrefix.length);
-        // e.g. N9, T8, T9 series
-        // Not sure if the lowercase variant is necessary
-        if (abbreviatedCommand.endsWith("_V2") || abbreviatedCommand.endsWith("_v2")) {
+        // e.g. T8, T9, T10, N8, X1 series
+        if (abbreviatedCommand.endsWith("_V2")) {
             abbreviatedCommand = this.handleV2commands(abbreviatedCommand);
         }
         this.emit('messageReceived', command + ' => ' + abbreviatedCommand);
-        const payload = this.getPayload(event);
-        switch (abbreviatedCommand) {
-            case 'FwBuryPoint': {
-                await this.handleFwBuryPoint(payload);
-                break;
+        if (abbreviatedCommand.startsWith('FwBuryPoint')) {
+            // Main function to handle FwBuryPoint messages
+            const status = await this.handleFwBuryPoint(payload);
+            if (status) {
+                return;
             }
+        }
+        switch (abbreviatedCommand) {
             case 'Evt': {
-                // TODO: Find out the value of the 'Evt' message
                 this.vacBot.handleEvt(payload);
+                if (this.vacBot.evt.event) {
+                    this.emit("Evt", this.vacBot.evt);
+                }
                 break;
             }
             case "Stats":
@@ -161,16 +180,40 @@ class EcovacsMQTT_JSON extends EcovacsMQTT {
                     this.vacBot.currentStats = null;
                 }
                 break;
-            case 'AirDring':
+            case 'AirDring': // The typo in 'AirDring' is intended
                 this.bot.handleAirDryingState(payload);
                 if (this.bot.airDryingStatus) {
                     this.emit('AirDryingState', this.bot.airDryingStatus);
+                }
+                break;
+            case 'BorderSpin':
+                this.bot.handleBorderSpin(payload);
+                this.emit('BorderSpin', this.bot.borderSpin);
+                break;
+            case 'CustomAreaMode':
+                this.bot.handleCustomAreaMode(payload);
+                // SweepMode is taken from the CustomAreaMode message
+                // (not from the SweepMode message)
+                this.emit('SweepMode', this.bot.sweepMode);
+                break;
+            case 'SweepMode':
+                this.bot.handleSweepMode(payload);
+                // MopOnlyMode is taken from the SweepMode message
+                this.emit('MopOnlyMode', this.bot.mopOnlyMode);
+                break;
+            case 'AICleanItemState':
+                this.bot.handleAICleanItemState(payload);
+                if (this.bot.aiCleanItemState.items.length) {
+                    this.emit('AICleanItemState', this.bot.aiCleanItemState);
                 }
                 break;
             case "ChargeState":
                 this.vacBot.handleChargeState(payload);
                 if (this.vacBot.chargeStatus) {
                     this.emit("ChargeState", this.vacBot.chargeStatus);
+                }
+                if (this.vacBot.chargeMode) {
+                    this.emit("ChargeMode", this.vacBot.chargeMode);
                 }
                 break;
             case "Battery":
@@ -193,6 +236,24 @@ class EcovacsMQTT_JSON extends EcovacsMQTT {
                 this.emit("CurrentCustomAreaValues", this.vacBot.currentCustomAreaValues);
                 this.emit("CurrentSpotAreas", this.vacBot.currentSpotAreas);
                 break;
+            case "StationState":
+                this.vacBot.handleStationState(payload);
+                if (this.vacBot.stationState.type !== null) {
+                    this.emit("StationState", this.vacBot.stationState);
+                    const airDryingState = this.bot.stationState.isAirDrying ? 'airdrying': 'idle';
+                    this.emit('AirDryingState', airDryingState);
+                }
+                break;
+            case "StationInfo":
+                this.vacBot.handleStationInfo(payload);
+                this.emit('StationInfo', this.vacBot.stationInfo);
+                break;
+            case "WashInterval":
+                this.vacBot.handleWashInterval(payload);
+                if (this.vacBot.washInterval !== null) {
+                    this.emit("WashInterval", this.vacBot.washInterval);
+                }
+                break;
             case "Speed":
                 this.vacBot.handleSpeed(payload);
                 this.emit("CleanSpeed", this.vacBot.cleanSpeed);
@@ -201,7 +262,7 @@ class EcovacsMQTT_JSON extends EcovacsMQTT {
                 this.vacBot.handleRelocationState(payload);
                 this.emit("RelocationState", this.vacBot.relocationState);
                 break;
-            case "MapInfo_V2":
+            case "MapInfo_V2_Yeedi":
                 try {
                     this.vacBot.handleMapInfoV2(payload);
                     this.emit("CurrentMapMID", this.vacBot.currentMapMID);
@@ -209,7 +270,7 @@ class EcovacsMQTT_JSON extends EcovacsMQTT {
                     this.emit("CurrentMapIndex", this.vacBot.currentMapIndex);
                     this.emit("Maps", this.vacBot.maps);
                 } catch (e) {
-                    tools.envLog("[EcovacsMQTT_JSON] Error on handling MapInfo_V2: %s", e.message);
+                    tools.envLogError(`error on handling MapInfo_V2 (yeedi): ${e.message}`);
                 }
                 break;
             case "CachedMapInfo":
@@ -220,14 +281,14 @@ class EcovacsMQTT_JSON extends EcovacsMQTT {
                     this.emit("CurrentMapIndex", this.vacBot.currentMapIndex);
                     this.emit("Maps", this.vacBot.maps);
                 } catch (e) {
-                    tools.envLog("[EcovacsMQTT_JSON] Error on handling CachedMapInfo: %s", e.message);
+                    tools.envLogError(`error on handling CachedMapInfo: ${e.message}`);
                 }
                 break;
             case "MapInfo":
                 if (commandPrefix === 'get') { //the getMapInfo only triggers the onMapInfo events but itself returns only status
-                    tools.envLog("[EcovacsMQTT_JSON] getMapInfo responded: %s", JSON.stringify(payload));
+                    tools.envLogWarn(`getMapInfo responded: ${JSON.stringify(payload)}`);
                 } else if (tools.isCanvasModuleAvailable()) {
-                    let mapImage = await this.vacBot.handleMapInfo(payload);
+                    let mapImage = await this.vacBot.handleMapImage(payload);
                     if (mapImage !== null) {
                         this.emit("MapImageData", mapImage);
                         if (this.vacBot.createMapImageOnly) {
@@ -236,36 +297,42 @@ class EcovacsMQTT_JSON extends EcovacsMQTT {
                     }
                 }
                 break;
-            case 'MajorMap':
-                // TODO: finish implementing MajorMap
-                //this.vacBot.handleMajorMap(payload);
-                break;
-            case 'MinorMap':
-                // TODO: finish implementing MinorMap
-                /*let mapImage = this.vacBot.handleMinorMap(payload);
-                if (mapImage !== null) {
-                    this.emit("MapLiveImage", mapImage);
-                }*/
-                break;
-            case 'MapTrace':
-                // TODO: implement MapTrace
+            case "MapInfo_V2":
+                tools.envLogWarn(`Unhandled MapInfo_V2`);
                 break;
             case "MapSet": {
-                //handle spotAreas, virtualWalls, noMopZones
+                // Handle spotAreas, virtualWalls, noMopZones
                 let mapset = this.vacBot.handleMapSet(payload);
                 if ((mapset["mapsetEvent"] !== 'error') || (mapset["mapsetEvent"] !== 'skip')) { //skip if not both boundary types are already processed
                     this.emit(mapset["mapsetEvent"], mapset["mapsetData"]);
                 }
                 break;
             }
+            case "MapSet_V2":
+                // TODO: handle subsets
+                tools.envLogWarn(`Unhandled MapSet_V2`);
+                break;
             case "MapSubSet": {
-                //handle spotAreas, virtualWalls, noMopZones
+                // Handle spotAreas, virtualWalls, noMopZones
                 let mapsubset = await this.vacBot.handleMapSubset(payload);
                 if (mapsubset["mapsubsetEvent"] !== 'error') {
+                    // MapSpotAreaInfo, MapVirtualBoundaryInfo
                     this.emit(mapsubset["mapsubsetEvent"], mapsubset["mapsubsetData"]);
                 }
                 break;
             }
+            case 'MajorMap':
+                this.vacBot.handleMajorMap(payload);
+                // TODO: finish implementing MajorMap
+                break;
+            case 'MapTrace':
+                this.vacBot.handleMapTrace(payload);
+                // TODO: finish implementing MapTrace
+                break;
+            case 'MinorMap':
+                let mapImage = this.vacBot.handleMinorMap(payload);
+                // TODO: finish implementing MinorMap and emit MapLiveImage
+                break;
             case "LifeSpan":
                 this.vacBot.handleLifespan(payload);
                 if (!this.vacBot.emitFullLifeSpanEvent) {
@@ -321,14 +388,12 @@ class EcovacsMQTT_JSON extends EcovacsMQTT {
             case "WaterInfo":
                 this.vacBot.handleWaterInfo(payload);
                 this.emit("WaterLevel", this.vacBot.waterLevel);
-                if (this.vacBot.sleepStatus === 0) {
-                    this.emit("WaterBoxInfo", this.vacBot.waterboxInfo);
-                    if (this.vacBot.moppingType !== null) {
-                        this.emit("WaterBoxMoppingType", this.vacBot.moppingType);
-                    }
-                    if (this.vacBot.scrubbingType !== null) {
-                        this.emit("WaterBoxScrubbingType", this.vacBot.scrubbingType);
-                    }
+                this.emit("WaterBoxInfo", this.vacBot.waterboxInfo);
+                if (this.vacBot.moppingType !== null) {
+                    this.emit("WaterBoxMoppingType", this.vacBot.moppingType);
+                }
+                if (this.vacBot.scrubbingType !== null) {
+                    this.emit("WaterBoxScrubbingType", this.vacBot.scrubbingType);
                 }
                 this.emitMoppingSystemReport();
                 break;
@@ -356,10 +421,20 @@ class EcovacsMQTT_JSON extends EcovacsMQTT {
             case 'Block':
                 this.vacBot.handleBlock(payload);
                 this.emit("DoNotDisturbEnabled", this.vacBot.block);
+                if (!!this.vacBot.block) {
+                    this.emit("DoNotDisturbBlockTime", this.vacBot.blockTime);
+                }
                 break;
             case 'AutoEmpty':
                 this.vacBot.handleAutoEmpty(payload);
                 this.emit("AutoEmpty", this.vacBot.autoEmpty);
+                const autoEmptyStatus = {
+                    'autoEmptyEnabled': (this.vacBot.autoEmpty === 1),
+                    'stationStatus': this.vacBot.autoEmptyStatus,
+                    'stationActive': (this.vacBot.autoEmptyStatus === 1),
+                    'dustBagFull': (this.vacBot.autoEmptyStatus === 5)
+                };
+                this.emit("AutoEmptyStatus", autoEmptyStatus);
                 break;
             case 'Volume':
                 this.vacBot.handleVolume(payload);
@@ -372,6 +447,10 @@ class EcovacsMQTT_JSON extends EcovacsMQTT {
             case 'TrueDetect':
                 this.vacBot.handleTrueDetect(payload);
                 this.emit("TrueDetect", this.vacBot.trueDetect);
+                break;
+            case 'Recognization':
+                this.vacBot.handleRecognization(payload);
+                this.emit('TrueDetect', this.vacBot.trueDetect);
                 break;
             case 'CleanCount':
                 this.vacBot.handleCleanCount(payload);
@@ -388,6 +467,10 @@ class EcovacsMQTT_JSON extends EcovacsMQTT {
             case 'CleanPreference':
                 this.vacBot.handleCleanPreference(payload);
                 this.emit("CleanPreference", this.vacBot.cleanPreference);
+                break;
+            case 'MultiMapState':
+                this.vacBot.handleMultiMapState(payload);
+                this.emit("MultiMapState", this.vacBot.multiMapState);
                 break;
             case 'LiveLaunchPwdState':
                 this.vacBot.handleLiveLaunchPwdState(payload);
@@ -445,21 +528,12 @@ class EcovacsMQTT_JSON extends EcovacsMQTT {
             case 'AIMap':
             case 'Clean'.toLowerCase():
             case 'MapState':
-            case 'Recognization':
                 if (payload) {
-                    tools.envLog(`[EcovacsMQTT_JSON] Payload for ${abbreviatedCommand} message: ${JSON.stringify(payload)}`);
+                    tools.envLogInfo(`payload for ${abbreviatedCommand} message: ${JSON.stringify(payload)}`);
                 }
                 break;
-            case 'AirQuality':
-                this.vacBot.handleAirQuality(payload);
-                if (this.vacBot.airQuality) {
-                    this.emit('AirQuality', this.vacBot.airQuality);
-                }
-                break;
-
             // T9 AIVI
-            case 'DModule':
-                // Lufterfrischermodul (hab ich leider nicht)
+            case 'DModule': // Air Freshener module
                 this.vacBot.handleDModule(payload);
                 if(this.vacBot.dmodule.enabled) {
                     this.emit("DModuleEnabled", this.vacBot.dmodule.enabled);
@@ -469,7 +543,14 @@ class EcovacsMQTT_JSON extends EcovacsMQTT {
             case 'AIMapAndMapSet':
                 // {"onAIMap":{"mid":"1839835603","totalCount":4},"onMapSet":{"mid":"1839835603","type":"svm","hasUnRead":0}}
                 break;
+
             // AirBot Z1
+            case 'AirQuality':
+                this.vacBot.handleAirQuality(payload);
+                if (this.vacBot.airQuality) {
+                    this.emit('AirQuality', this.vacBot.airQuality);
+                }
+                break;
             case 'Mic':
                 this.vacBot.handleGetMic(payload);
                 if (this.vacBot.mic) {
@@ -551,80 +632,38 @@ class EcovacsMQTT_JSON extends EcovacsMQTT {
                 break;
             case 'HumanoidFollow':
                 this.vacBot.handleHumanoidFollow(payload);
-                if (this.vacBot.humanoidFollow_Yiko) {
-                    this.emit('HumanoidFollowYiko', this.vacBot.humanoidFollow_Yiko);
+                if ((this.vacBot.humanoidFollow_Yiko) || (this.vacBot.humanoidFollow_Video)) {
+                    if (this.vacBot.humanoidFollow_Yiko) {
+                        this.emit('HumanoidFollowYiko', this.vacBot.humanoidFollow_Yiko);
+                    }
+                    if (this.vacBot.humanoidFollow_Video) {
+                        this.emit('HumanoidFollowVideo', this.vacBot.humanoidFollow_Video);
+                    }
+                    break;
                 }
-                if (this.vacBot.humanoidFollow_Video) {
-                    this.emit('HumanoidFollowVideo', this.vacBot.humanoidFollow_Video);
-                }
-                break;
+            // ====================
+            // FwBuryPoint messages
+            // ====================
             case 'FwBuryPoint-bd_sysinfo':
                 this.vacBot.handleSysinfo(payload);
                 if (this.vacBot.sysinfo) {
                     this.emit('Sysinfo', this.vacBot.sysinfo);
+                    break;
                 }
-                break;
-            case 'FwBuryPoint-bd_relocation':
-                tools.envLog("[EcovacsMQTT_JSON] Relocating...");
-                break;
-            case 'FwBuryPoint-bd_setting-evt':
-                // Event -> Config stored...
-                break;
-            case 'FwBuryPoint-bd_setting':
-                tools.envLog("[EcovacsMQTT_JSON] Saved settings:");
-                tools.envLog(payload);
-                break;
             case 'FwBuryPoint-bd_air-quality':
-                this.vacBot.handleAirQuality(
-                    {
+                if (this.vacBot.airQuality) {
+                    this.vacBot.handleAirQuality({
                         'pm25': payload['pm25'],
                         'pm_10': payload['pm1'],
                         'particulateMatter10': payload['pm10'],
-                        'airQualityIndex':this.vacBot.airQuality.airQualityIndex,
+                        'airQualityIndex': this.vacBot.airQuality.airQualityIndex,
                         'volatileOrganicCompounds': payload['voc'],
                         'temperature': this.vacBot.airQuality.temperature,
                         'humidity': this.vacBot.airQuality.humidity
-                    }
-                );
-                break;
-            case 'FwBuryPoint-bd_gyrostart':
-                /*
-                {
-                    "gid":"G1669968164685",
-                    "ts":"1670148323348",
-                    "index":"0000000552",
-                    "gst":400
+                    });
+                    this.emit('AirQuality', this.vacBot.airQuality);
+                    break;
                 }
-                */
-                break;
-            case 'FwBuryPoint-bd_basicinfo':
-                /*
-                {
-                    "gid": "G1669968164685",
-                    "index": "0000000551",
-                    "ts": "1670148317338",
-                    "orig": {
-                        "battery": 100,
-                        "chargeState": 0,
-                        "robotState": 0,
-                        "robotPos": "-11,248",
-                        "chargerPos": "27,427",
-                        "onCharger": 1
-                    },
-                    "new": {
-                        "battery": 100,
-                        "chargeState": 0,
-                        "robotState": 0,
-                        "robotPos": "-21,161",
-                        "chargerPos": "27,427",
-                        "onCharger": 0
-                    }
-                }
-                */
-                break;
-            case 'onFwBuryPoint-bd_errorcode':
-                tools.envLog("[EcovacsMQTT_JSON] Got error: " + payload['body']['code']);
-                break;
             case 'FwBuryPoint-bd_task-return-normal-start':
             case 'FwBuryPoint-bd_task-return-normal-stop':
             case 'FwBuryPoint-bd_task-clean-move-start':
@@ -632,19 +671,30 @@ class EcovacsMQTT_JSON extends EcovacsMQTT {
             case 'FwBuryPoint-bd_task-clean-current-spot-start':
             case 'FwBuryPoint-bd_task-clean-current-spot-stop':
             case 'FwBuryPoint-bd_task-clean-specified-spot-start':
-            case 'FwBuryPoint-bd_task-clean-specified-spot-stop':
-                this.vacBot.handleTask(
-                    abbreviatedCommand.substring(20),
-                    payload
-                );
-                this.emit('TaskStarted',abbreviatedCommand.substring(20), payload);
+            case 'FwBuryPoint-bd_task-clean-specified-spot-stop': {
+                const fwBuryPointEvent = abbreviatedCommand.substring(20);
+                this.vacBot.handleTask(fwBuryPointEvent, payload);
+                if (this.currentTask) {
+                    this.emit('TaskStarted', this.currentTask);
+                    break;
+                }
+            }
+            case 'FwBuryPoint-bd_dtofstart': // DToF-Laser-Sensor
+            case 'FwBuryPoint-bd_errorcode':
+            case 'FwBuryPoint-bd_relocation':
+            case 'FwBuryPoint-bd_setting':
+            case 'FwBuryPoint-bd_setting-evt': // Event -> Config stored...
                 break;
-            case 'FwBuryPoint-bd_dtofstart':
-                // DToF-Laser-Sensor
-               break;
+            case 'FwBuryPoint-bd_gyrostart':
+                /* {
+                    "gid":"G1669968164685",
+                    "ts":"1670148323348",
+                    "index":"0000000552",
+                    "gst":400
+                } */
+                break;
             case 'FwBuryPoint-bd_returnchargeinfo':
-                /*
-                {
+                /* {
                     "gid": "G1669968164685",
                     "index": "0000000564",
                     "ts": "1670148387296",
@@ -658,12 +708,10 @@ class EcovacsMQTT_JSON extends EcovacsMQTT {
                     "detectOmniWallWhenPlanFinish": 0,
                     "detectCodeWhenPlanFinish": 0,
                     "chargingStatus": 0
-                }
-                */
+                } */
                 break;
             case 'FwBuryPoint-bd_basicinfo-evt':
-                /*
-                {
+                /* {
                     "gid": "G1669968164685",
                     "index": "0000000563",
                     "ts": "1670148384758",
@@ -683,18 +731,16 @@ class EcovacsMQTT_JSON extends EcovacsMQTT {
                         "chargerPos": "27,427",
                         "onCharger": 1
                     }
-                }
-                */
+                } */
                 break;
             case 'FwBuryPoint-bd_cri04':
-                // ich VERMUTE, es handelt sich um Signal(stärke)werte vom/zum externen Sensor
-                /*
-                {
+                // Vermutung: es handelt sich um Signal(stärke)werte vom/zum externen Sensor
+                // Assumption: these are signal values (strength) from/to the external sensor
+                /* {
                     "ts": "1670148786607",
                     "cr": 26,
                     "rr": 657
-                }
-                */
+                } */
                 break;
             case 'ThreeModuleStatus':
                 this.vacBot.handleThreeModule(payload);
@@ -722,31 +768,32 @@ class EcovacsMQTT_JSON extends EcovacsMQTT {
                 break;
             case 'AreaPoint':
                 // Hindernisse, die beim Reinigen erkannt werden (AIVI)
+                // Obstacles detected during cleaning (AIVI)
                 break;
             case 'AirSpeed':
             case 'Humidity':
             case 'Temperature':
                 if (payload) {
-                    tools.envLog(`[AirPurifier] Payload for ${abbreviatedCommand} message: ${JSON.stringify(payload)}`);
+                    tools.envLogInfo(`[AirPurifier] Payload for ${abbreviatedCommand} message: ${JSON.stringify(payload)}`);
                 }
                 break;
             case 'setVoice':
-                tools.envLog(`[EcovacsMQTT_JSON] SETVOICE:`);
-                tools.envLog(payload);
+                tools.envLogInfo(`[EcovacsMQTT_JSON] SETVOICE:`);
+                tools.envLogInfo(payload);
                 this.emit('SetVoice', payload);
                 break;
             case 'Voice':
                 if (payload && payload.downloads) {
                     payload.downloads.forEach((dlObject) => {
-                        if(dlObject.status == "dl") {
-                            tools.envLog(`[EcovacsMQTT_JSON] Download(` + dlObject.type + `): ` + dlObject.progress + `%`);
+                        if (dlObject.status === "dl") {
+                            tools.envLogInfo(`[EcovacsMQTT_JSON] Download(` + dlObject.type + `): ` + dlObject.progress + `%`);
                             this.emit('VoiceDownloadProgress', dlObject);
-                        } else if(dlObject.status == "dld") {
-                            tools.envLog(`[EcovacsMQTT_JSON] Download(` + dlObject.type + `): Complete`);
+                        } else if (dlObject.status === "dld") {
+                            tools.envLogInfo(`[EcovacsMQTT_JSON] Download(` + dlObject.type + `): Complete`);
                             this.emit('VoiceDownloadComplete', dlObject);
                         } else {
-                            tools.envLog(`[EcovacsMQTT_JSON] unknown download state`);
-                            tools.envLog(dlObject);
+                            tools.envLogInfo(`[EcovacsMQTT_JSON] unknown download state`);
+                            tools.envLogInfo(dlObject);
                         }
                     });
                 }
@@ -756,7 +803,7 @@ class EcovacsMQTT_JSON extends EcovacsMQTT {
                 this.emit('WifiList', payload);
                 break;
             case 'ListenMusic':
-                tools.envLog(event);
+                tools.envLogInfo(event);
                 break;
             case 'Ota':
                 this.vacBot.handleOverTheAirUpdate(payload);
@@ -769,22 +816,15 @@ class EcovacsMQTT_JSON extends EcovacsMQTT {
             case 'AudioCallState':
                 this.vacBot.handleAudioCallState(event);
                 break;
-            default:
-                tools.envLog(`[EcovacsMQTT_JSON] Payload for unknown command ${command}: ${JSON.stringify(payload)}`);
+            default: {
+                if (command === 'onFwBuryPoint') {
+                    tools.envLogWarn('onFwBuryPoint message was unhandled');
+                } else {
+                    tools.envLogWarn(`got payload for unknown command '${command}': ${JSON.stringify(payload)}`);
+                }
                 break;
+            }
         }
-    }
-
-    /**
-     * Given an event, return the payload
-     * @param {Object} event - The event object that was passed to the handler
-     * @returns The payload of the event
-     */
-    getPayload(event) {
-        if (event.hasOwnProperty('payload')) {
-            return event['payload'];
-        }
-        return event;
     }
 
     /**
@@ -806,18 +846,27 @@ class EcovacsMQTT_JSON extends EcovacsMQTT {
         if (command.startsWith("report")) {
             commandPrefix = 'report';
         }
-        // Remove from "get" commands
+        // Remove "get" from the command
         if (command.startsWith("get") || command.startsWith("Get")) {
             commandPrefix = 'get';
+        }
+        // Remove "set" from the command
+        if (command.startsWith("set") || command.startsWith("Set")) {
+            commandPrefix = 'set';
         }
         return commandPrefix;
     }
 
     handleV2commands(abbreviatedCommand) {
-        if (this.vacBot.authDomain === constants.AUTH_DOMAIN_YD) {
-            switch (abbreviatedCommand) {
-                case 'MapInfo_V2':
-                    return abbreviatedCommand;
+        if (abbreviatedCommand === 'MapSet_V2') {
+            // TODO: handle subsets
+            return abbreviatedCommand;
+        };
+        if (abbreviatedCommand === 'MapInfo_V2') {
+            if (this.vacBot.authDomain === constants.AUTH_DOMAIN_YD) {
+                return 'MapInfo_V2_Yeedi';
+            } else {
+                return abbreviatedCommand;
             }
         }
         return abbreviatedCommand.slice(0, -3);
@@ -831,111 +880,134 @@ class EcovacsMQTT_JSON extends EcovacsMQTT {
      */
     async handleFwBuryPoint(payload) {
         try {
-            let content = JSON.parse(payload['content']);
-            const fwBuryMessage = content["rn"];
-            tools.envLog(fwBuryMessage);
-            let dVal = content['d']['body']['data']['d_val'];
-            let dValObject = null;
-
-            // try to fix invalid JSON
-            try {
-                dValObject = (typeof dVal == 'string') ? JSON.parse(dVal) : dVal;
-            } catch(e) {
-                if(dVal.indexOf("}") < dVal.indexOf("{")) {
-                    if(dVal.indexOf("]") > -1 && dVal.indexOf("[") == -1) {
-                        dVal = "[" + dVal.substring(dVal.indexOf("{"));
-                    } else {
+            let fwBuryPointEvent = '';
+            let fwBuryPoint = {};
+            if (payload.hasOwnProperty('new')) {
+                tools.envLogFwBuryPoint(payload);
+                fwBuryPoint = payload.new;
+            } else if (payload.hasOwnProperty('content')) {
+                const content = JSON.parse(payload['content']);
+                fwBuryPointEvent = content["rn"];
+                tools.envLogFwBuryPoint(`event: ${fwBuryPointEvent}`);
+                tools.envLogFwBuryPoint(payload);
+                let dVal = content['d']['body']['data']['d_val'];
+                let dValObject = null;
+                // try to fix invalid JSON
+                try {
+                    dValObject = (typeof dVal === 'string') ? JSON.parse(dVal) : dVal;
+                } catch (e) {
+                    if (dVal.indexOf("}") < dVal.indexOf("{")) {
+                        if (dVal.indexOf("]") > -1 && dVal.indexOf("[") === -1) {
+                            dVal = "[" + dVal.substring(dVal.indexOf("{"));
+                        } else {
+                            dVal = "[" + dVal.substring(dVal.indexOf("{"));
+                        }
+                    } else if (dVal.indexOf("]") < dVal.indexOf("[")) {
                         dVal = "[" + dVal.substring(dVal.indexOf("{"));
                     }
-                } else if(dVal.indexOf("]") < dVal.indexOf("[")) {
-                    dVal = "[" + dVal.substring(dVal.indexOf("{"));
+                    dValObject = JSON.parse(dVal);
                 }
-                dValObject = JSON.parse(dVal);
+                fwBuryPoint = dValObject;
             }
 
-            const fwBuryPoint = dValObject;
-            let val;
-
-            if (fwBuryMessage == 'bd_sysinfo') {
-                this.vacBot.handleSysinfo(JSON.stringify({'body': fwBuryPoint}));
-                return;
-            } else if (fwBuryMessage == 'bd_wifi_24g') {
+            if (fwBuryPointEvent === 'bd_wifi_24g') {
                 //
-            } else if (fwBuryMessage == 'bd_onoffline') {
+            } else if (fwBuryPointEvent === 'bd_onoffline') {
                 // after reconnection
-            } else if (fwBuryMessage == 'bd_PowerOnOff') {
+            } else if (fwBuryPointEvent === 'bd_PowerOnOff') {
                 // after powered on
-            } else if (fwBuryMessage == 'bd_fbi08') {
+            } else if (fwBuryPointEvent === 'bd_fbi08') {
                 // unknown
-            } else if (fwBuryMessage == 'bd_returnchargeinfo') {
+            } else if (fwBuryPointEvent === 'bd_returnchargeinfo') {
                 // charging informations
-            } else if (fwBuryMessage == 'bd_returndock') {
+            } else if (fwBuryPointEvent === 'bd_returndock') {
                 // returning to dock
-            } else if (fwBuryMessage == 'bd_trigger') {
+            } else if (fwBuryPointEvent === 'bd_trigger') {
                 // when pyhsical- or app button is pressed
-            } else if (fwBuryMessage == 'bd_task') {
+            } else if (fwBuryPointEvent === 'bd_task') {
                 // when a tasks starts
-            } else if (fwBuryMessage == 'bd_sensortriggerinfo') {
+            } else if (fwBuryPointEvent === 'bd_sensortriggerinfo') {
                 // when a sensor gets triggered
-            } else if (fwBuryMessage == 'bd_cri01') {
+            } else if (fwBuryPointEvent === 'bd_cri01') {
                 // unknown
-            } else if (fwBuryMessage == 'bd_cc10') {
+            } else if (fwBuryPointEvent === 'bd_cc10') {
                 // Charging Case
-            } else if (fwBuryMessage == 'bd_vslaminfo') {
+            } else if (fwBuryPointEvent === 'bd_vslaminfo') {
                 // unknown
-            } else if (fwBuryMessage == 'bd_planinfo') {
+            } else if (fwBuryPointEvent === 'bd_planinfo') {
                 // unknown
-            } else if (fwBuryMessage == 'bd_extramap') {
+            } else if (fwBuryPointEvent === 'bd_extramap') {
                 // seems to get raised, when the robot found extra space that is not on the map
-            } else if (fwBuryMessage == 'bd_light') {
+            } else if (fwBuryPointEvent === 'bd_light') {
                 // unknown
-            } else if (fwBuryMessage == 'bd_cache') {
+            } else if (fwBuryPointEvent === 'bd_cache') {
                 // unknown
             }
 
+            // Info whether the dust case is installed
+            if (fwBuryPoint.hasOwnProperty('dirtboxState')) {
+                const val = fwBuryPoint.dirtboxState;
+                this.emit('DustCaseInfo', val);
+                return true;
+            }
             if (fwBuryPoint.hasOwnProperty('code')) {
-                if (fwBuryPoint.code === 110) {
-                    // code 110 = NoDustBox: Dust Bin Not installed
-                    val = Number(!fwBuryPoint.state);
+                if (fwBuryPoint.code === 110) { /* NoDustBox: Dust Bin Not installed */
+                    const val = Number(!fwBuryPoint.state);
                     this.emit('DustCaseInfo', val);
+                    return true;
                 }
             }
             if (fwBuryPoint.hasOwnProperty('multiMap')) {
                 // Info whether multi-map mode is enabled
-                val = fwBuryPoint.multiMap;
+                const val = fwBuryPoint.multiMap;
                 this.emit('SettingInfoMultiMap', val);
+                return true;
             }
             if (fwBuryPoint.hasOwnProperty('AI')) {
                 // Info whether AIVI is enabled
-                val = fwBuryPoint.AI;
+                const val = fwBuryPoint.AI;
                 this.emit('SettingInfoAIVI', val);
+                return true;
+            }
+            if (fwBuryPoint.hasOwnProperty('aromamode')) {
+                // aromamode: 0 = disabled, 1 = enabled
+                const val = fwBuryPoint.aromamode;
+                this.emit('AromaMode', val);
+                return true;
             }
             // ----------------------------------
-            // We use these properties as trigger
+            // Use these properties as trigger
             // ----------------------------------
             if (fwBuryPoint.hasOwnProperty('waterAmount') || fwBuryPoint.hasOwnProperty('waterbox')) {
                 // Mopping functionality related data
                 this.vacBot.run("GetWaterInfo");
+                return true;
             }
             if (fwBuryPoint.hasOwnProperty('mopremind')) {
                 // Info whether 'Cleaning Cloth Reminder' is enabled
                 this.vacBot.run('GetDusterRemind');
+                return true;
             }
             if (fwBuryPoint.hasOwnProperty('isPressurized')) {
                 // Info whether 'Auto-Boost Suction' is enabled
                 this.vacBot.run('GetCarpetPressure');
+                return true;
             }
             if (fwBuryPoint.hasOwnProperty('DND')) {
                 // Info whether 'Do Not Disturb' is enabled
                 this.vacBot.run('GetDoNotDisturb');
+                return true;
             }
             if (fwBuryPoint.hasOwnProperty('continue')) {
                 // Info whether 'Continuous Cleaning' is enabled
                 this.vacBot.run('GetContinuousCleaning');
+                return true;
             }
         } catch (e) {
-            tools.envLog(`Error handling onFwBuryPoint payload: ${payload}`);
+            tools.envLogWarn(`error handling onFwBuryPoint payload: '${e.message}'`);
+            tools.envLogPayload(payload);
         }
+        return false;
     }
 }
 

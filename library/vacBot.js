@@ -2,12 +2,12 @@
 
 const tools = require('./tools');
 const i18n = require('./i18n');
-const map = require('./mapTemplate');
+const map = require('./mapInfo');
 const {errorCodes} = require('./errorCodes.json');
 const constants = require("./constants");
 const crypto = require("crypto");
 const querystring = require("node:querystring");
-const {default: axios} = require("axios");
+const axios = require('axios').default;
 
 /**
  * @class VacBot
@@ -66,10 +66,11 @@ class VacBot {
         this.batteryIsLow = false;
         this.cleanReport = null;
         this.chargeStatus = null;
+        this.chargeMode = null;
         this.cleanSpeed = null;
         this.waterLevel = null;
         this.waterboxInfo = null;
-        this.moppingType = 0;
+        this.moppingType = null;
         this.scrubbingType = null;
         this.sleepStatus = null;
 
@@ -124,6 +125,7 @@ class VacBot {
         this.createMapImageOnly = false;
         this.mapDataObject = null;
         this.mapDataObjectQueue = [];
+        this.mapImageDataQueue = [];
 
         this.schedule = [];
 
@@ -144,12 +146,90 @@ class VacBot {
         this.ecovacs = new this.protocolModule(this, user, hostname, resource, secret, continent, country, vacuum, serverAddress);
 
         this.ecovacs.on('ready', () => {
-            tools.envLog('[VacBot] Ready event!');
+            tools.envLogInfo(`[VacBot] Ready event!`);
             this.is_ready = true;
         });
 
+        this.on('Maps', (mapData) => {
+            if (this.createMapDataObject) {
+                (async () => {
+                    try {
+                        await this.handleMapsEvent(mapData);
+                    } catch (e) {
+                        tools.envLogInfo(`[vacBot] Error handleMapsEvent: ${e.message}`);
+                    }
+                })();
+            }
+        });
+
+        this.on('MapSpotAreas', (spotAreas) => {
+            if (this.createMapDataObject) {
+                (async () => {
+                    try {
+                        await this.handleMapSpotAreasEvent(spotAreas);
+                    } catch (e) {
+                        tools.envLogInfo(`[vacBot] Error handleMapSpotAreasEvent: ${e.message}`);
+                    }
+                })();
+            }
+        });
+
+        this.on('MapSpotAreaInfo', (spotAreaInfo) => {
+            if (this.createMapDataObject) {
+                (async () => {
+                    try {
+                        await this.handleMapSpotAreaInfo(spotAreaInfo);
+                    } catch (e) {
+                        tools.envLogInfo(`[vacBot] Error handleMapSpotAreaInfo: ${e.message}`);
+                    }
+                })();
+            }
+        });
+
+        this.on('MapVirtualBoundaries', (virtualBoundaries) => {
+            if (this.createMapDataObject) {
+                (async () => {
+                    try {
+                        await this.handleMapVirtualBoundaries(virtualBoundaries);
+                    } catch (e) {
+                        tools.envLogInfo(`[vacBot] Error handleMapVirtualBoundaries: ${e.message}`);
+                    }
+                })();
+            }
+        });
+
+        this.on('MapVirtualBoundaryInfo', (virtualBoundaryInfo) => {
+            if (this.createMapDataObject) {
+                (async () => {
+                    try {
+                        await this.handleMapVirtualBoundaryInfo(virtualBoundaryInfo);
+                    } catch (e) {
+                        tools.envLogInfo(`[vacBot] Error handleMapVirtualBoundaryInfo: ${e.message}`);
+                    }
+                })();
+            }
+        });
+
+        this.on('MapImageData', (mapImageData) => {
+            if (this.createMapDataObject) {
+                (async () => {
+                    try {
+                        await this.handleMapImageData(mapImageData);
+                    } catch (e) {
+                        tools.envLogInfo(`[vacBot] Error handleMapImageInfo: ${e.message}`);
+                    }
+                })();
+            }
+        });
+
         this.on('MapDataReady', () => {
-            if (this.mapDataObject) {
+            if (this.createMapImage && tools.isCanvasModuleAvailable() && this.is950type()) {
+                for (let m=0; m < this.mapImageDataQueue.length; m++) {
+                    const mapID = this.mapImageDataQueue[m]['mapID'];
+                    this.run('GetMapInfo', mapID, 'outline', false); // GetMapImage
+                }
+            }
+            if (this.mapDataObject && !this.mapImageDataQueue.length) {
                 if (this.createMapImageOnly) {
                     if (this.mapDataObject[0] && this.mapDataObject[0].mapImage) {
                         this.createMapDataObject = false;
@@ -159,77 +239,194 @@ class VacBot {
                 } else {
                     this.ecovacs.emit('MapDataObject', this.mapDataObject);
                 }
-                map.mapDataObject = this.mapDataObject; // clone to mapTemplate
-                this.mapDataObject = null;
+            } else {
+                tools.envLogWarn('mapDataObject is empty');
             }
+        });
+    }
+
+    /**
+     * Handle object with infos about the maps to provide a full map data object
+     * @param {Object} mapsData
+     * @returns {Promise<void>}
+     */
+    async handleMapsEvent(mapsData) {
+        if (!this.mapDataObject) {
+            this.mapDataObject = [];
+            for (const m in mapsData['maps']) {
+                if (Object.prototype.hasOwnProperty.call(mapsData['maps'], m)) {
+                    const mapID = mapsData['maps'][m]['mapID'];
+                    this.mapDataObject.push(mapsData['maps'][m].toJSON());
+                    this.run('GetSpotAreas', mapID);
+                    this.mapDataObjectQueue.push({
+                        'type': 'GetSpotAreas',
+                        'mapID': mapID
+                    });
+                    if (this.createMapImage && tools.isCanvasModuleAvailable() && this.is950type()) {
+                        this.mapImageDataQueue.push({
+                            'type': 'GetMapInfo',
+                            'mapID': mapID
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * Handle object with spot area data to provide a full map data object
+     * @param {Object} spotAreasObject
+     * @returns {Promise<void>}
+     */
+    async handleMapSpotAreasEvent(spotAreasObject) {
+        const mapID = spotAreasObject['mapID'];
+        const mapObject = map.getMapObject(this.mapDataObject, mapID);
+        if (mapObject) {
+            mapObject['mapSpotAreas'] = [];
+            for (const s in spotAreasObject['mapSpotAreas']) {
+                if (Object.prototype.hasOwnProperty.call(spotAreasObject['mapSpotAreas'], s)) {
+                    const mapSpotAreaData = spotAreasObject['mapSpotAreas'][s];
+                    const mapSpotAreaID = mapSpotAreaData['mapSpotAreaID'];
+                    mapObject['mapSpotAreas'].push(mapSpotAreaData.toJSON());
+                    this.run('GetSpotAreaInfo', mapID, mapSpotAreaID);
+                    this.mapDataObjectQueue.push({
+                        'type': 'GetSpotAreaInfo',
+                        'mapID': mapID,
+                        'mapSpotAreaID': mapSpotAreaID
+                    });
+                }
+            }
+        }
+        this.mapDataObjectQueue = this.mapDataObjectQueue.filter(item => {
+            return !((item.mapID === mapID) && (item.type === 'GetSpotAreas'));
         });
 
-        this.on('Maps', (mapData) => {
-            if (this.createMapDataObject) {
-                (async () => {
-                    try {
-                        await this.handleMapsEvent(mapData);
-                    } catch (e) {
-                        tools.envLog('[vacBot] Error handleMapsEvent: ' + e.message);
-                    }
-                })();
-            }
+        this.run('GetVirtualBoundaries', mapID);
+        this.mapDataObjectQueue.push({
+            'type': 'GetVirtualBoundaries',
+            'mapID': mapID
         });
-        this.on('MapSpotAreas', (spotAreas) => {
-            if (this.createMapDataObject) {
-                (async () => {
-                    try {
-                        await this.handleMapSpotAreasEvent(spotAreas);
-                    } catch (e) {
-                        tools.envLog('[vacBot] Error handleMapSpotAreasEvent: ' + e.message);
-                    }
-                })();
+        setTimeout(()=> {
+            this.handleZeroVirtualBoundariesForMap(mapID);
+        }, this.mapDataObject.length * 500);
+    }
+
+    /**
+     * Handle object with spot area info data to provide a full map data object
+     * @param {Object} spotAreaInfo
+     * @returns {Promise<void>}
+     */
+    async handleMapSpotAreaInfo(spotAreaInfo) {
+        const mapID = spotAreaInfo['mapID'];
+        const mapSpotAreaID = spotAreaInfo['mapSpotAreaID'];
+        const spotAreaObject = map.getSpotAreaObject(this.mapDataObject, mapID, mapSpotAreaID);
+        if (spotAreaObject) {
+            Object.assign(spotAreaObject, spotAreaInfo.toJSON());
+        }
+        this.mapDataObjectQueue = this.mapDataObjectQueue.filter(item => {
+            if ((item.mapID === mapID) && (item.type === 'GetSpotAreaInfo')) {
+                if (item.mapSpotAreaID === mapSpotAreaID) {
+                    return false;
+                }
             }
+            return true;
         });
-        this.on('MapSpotAreaInfo', (spotAreaInfo) => {
-            if (this.createMapDataObject) {
-                (async () => {
-                    try {
-                        await this.handleMapSpotAreaInfo(spotAreaInfo);
-                    } catch (e) {
-                        tools.envLog('[vacBot] Error handleMapSpotAreaInfo: ' + e.message);
-                    }
-                })();
+        this.handleMapDataReady();
+    }
+
+    /**
+     * Handle object with virtual boundary data to provide a full map data object
+     * @param {Object} virtualBoundaries
+     * @returns {Promise<void>}
+     */
+    async handleMapVirtualBoundaries(virtualBoundaries) {
+        const mapID = virtualBoundaries['mapID'];
+        const mapObject = map.getMapObject(this.mapDataObject, mapID);
+        if (mapObject) {
+            mapObject['mapVirtualBoundaries'] = [];
+            const virtualBoundariesCombined = [...virtualBoundaries['mapVirtualWalls'], ...virtualBoundaries['mapNoMopZones']];
+            const virtualBoundaryArray = [];
+            for (const i in virtualBoundariesCombined) {
+                if (virtualBoundariesCombined.hasOwnProperty(i)) {
+                    virtualBoundaryArray[virtualBoundariesCombined[i]['mapVirtualBoundaryID']] = virtualBoundariesCombined[i];
+                }
             }
-        });
-        this.on('MapVirtualBoundaries', (virtualBoundaries) => {
-            if (this.createMapDataObject) {
-                (async () => {
-                    try {
-                        await this.handleMapVirtualBoundaries(virtualBoundaries);
-                    } catch (e) {
-                        tools.envLog('[vacBot] Error handleMapVirtualBoundaries: ' + e.message);
-                    }
-                })();
+            for (const i in virtualBoundaryArray) {
+                if (virtualBoundaryArray.hasOwnProperty(i)) {
+                    const mapVirtualBoundaryID = virtualBoundaryArray[i]['mapVirtualBoundaryID'];
+                    const mapVirtualBoundaryType = virtualBoundaryArray[i]['mapVirtualBoundaryType'];
+                    mapObject['mapVirtualBoundaries'].push(virtualBoundaryArray[i].toJSON());
+                    this.run('GetVirtualBoundaryInfo', mapID, mapVirtualBoundaryID, mapVirtualBoundaryType);
+                    this.mapDataObjectQueue.push({
+                        'type': 'GetVirtualBoundaryInfo',
+                        'mapID': mapID,
+                        'mapVirtualBoundaryID': mapVirtualBoundaryID,
+                        'mapVirtualBoundaryType': mapVirtualBoundaryType
+                    });
+                }
             }
+        }
+        this.mapDataObjectQueue = this.mapDataObjectQueue.filter(item => {
+            return !((item.mapID === mapID) && (item.type === 'GetVirtualBoundaries'));
         });
-        this.on('MapVirtualBoundaryInfo', (virtualBoundaryInfo) => {
-            if (this.createMapDataObject) {
-                (async () => {
-                    try {
-                        await this.handleMapVirtualBoundaryInfo(virtualBoundaryInfo);
-                    } catch (e) {
-                        tools.envLog('[vacBot] Error handleMapVirtualBoundaryInfo: ' + e.message);
+        this.handleMapDataReady();
+    }
+
+    /**
+     * Handle object with virtual boundary info data to provide a full map data object
+     * @param {Object} virtualBoundaryInfo
+     * @returns {Promise<void>}
+     */
+    async handleMapVirtualBoundaryInfo(virtualBoundaryInfo) {
+        const mapID = virtualBoundaryInfo['mapID'];
+        const virtualBoundaryID = virtualBoundaryInfo['mapVirtualBoundaryID'];
+        const virtualBoundaryObject = map.getVirtualBoundaryObject(this.mapDataObject, mapID, virtualBoundaryID);
+        if (virtualBoundaryObject) {
+            Object.assign(virtualBoundaryObject, virtualBoundaryInfo.toJSON());
+        }
+        this.mapDataObjectQueue = this.mapDataObjectQueue.filter(item => {
+            if ((item.mapID === mapID) && (item.type === 'GetVirtualBoundaryInfo')) {
+                if (item.mapVirtualBoundaryType === virtualBoundaryInfo.mapVirtualBoundaryType) {
+                    if (item.mapVirtualBoundaryID === virtualBoundaryID) {
+                        return false;
                     }
-                })();
+                }
             }
+            return true;
         });
-        this.on('MapImageData', (mapImageInfo) => {
-            if (this.createMapDataObject) {
-                (async () => {
-                    try {
-                        await this.handleMapImageInfo(mapImageInfo);
-                    } catch (e) {
-                        tools.envLog('[vacBot] Error handleMapImageInfo: ' + e.message);
-                    }
-                })();
-            }
+        this.handleMapDataReady();
+    }
+
+    handleZeroVirtualBoundariesForMap(mapID) {
+        this.mapDataObjectQueue = this.mapDataObjectQueue.filter(item => {
+            return !((item.mapID === mapID) && (item.type === 'GetVirtualBoundaries'));
         });
+        this.handleMapDataReady();
+    }
+
+    handleMapDataReady() {
+        if (this.mapDataObjectQueue.length === 0) {
+            this.ecovacs.emit('MapDataReady');
+        }
+    }
+
+    /**
+     * Handle object with map image data to provide a full map data object
+     * @param {Object} mapImageData
+     * @returns {Promise<void>}
+     */
+    async handleMapImageData(mapImageData) {
+        const mapID = mapImageData['mapID'];
+        const mapObject = map.getMapObject(this.mapDataObject, mapID);
+        if (mapObject) {
+            mapObject['mapImage'] = mapImageData;
+        }
+        this.mapImageDataQueue = this.mapImageDataQueue.filter(item => {
+            return !((item.mapID === mapID) && (item.type === 'GetMapInfo'));
+        });
+        if ((this.mapImageDataQueue.length === 0) || this.createMapImageOnly) {
+            this.ecovacs.emit('MapDataReady');
+        }
     }
 
     /**
@@ -325,6 +522,10 @@ class VacBot {
      */
     run(command, ...args) {
         switch (command.toLowerCase()) {
+            case "Generic".toLowerCase(): {
+                this.sendCommand(new this.vacBotCommand.Generic(args[0], args[1]));
+                break;
+            }
             case "Clean".toLowerCase(): {
                 this.sendCommand(new this.vacBotCommand.Clean());
                 break;
@@ -409,9 +610,14 @@ class VacBot {
                 break;
             }
             case "SetWaterLevel".toLowerCase(): {
-                const level = Number(args[0]);
-                if ((level >= 1) && (level <= 4)) {
-                    this.sendCommand(new this.vacBotCommand.SetWaterLevel(level));
+                const amount = Number(args[0]);
+                const sweepType = Number(args[1]);
+                if ((amount >= 1) && (amount <= 4)) {
+                    if ((sweepType === 1) || (sweepType === 2)) {
+                        this.sendCommand(new this.vacBotCommand.SetWaterLevel(amount, sweepType));
+                    } else {
+                        this.sendCommand(new this.vacBotCommand.SetWaterLevel(amount));
+                    }
                 }
                 break;
             }
@@ -459,178 +665,6 @@ class VacBot {
             case "MoveTurnAround".toLowerCase():
                 this.sendCommand(new this.vacBotCommand.MoveTurnAround());
                 break;
-        }
-    }
-
-    /**
-     * Handle object with map info data to provide a full map data object
-     * @param {Object} mapData
-     * @returns {Promise<void>}
-     */
-    async handleMapsEvent(mapData) {
-        if (!this.mapDataObject) {
-            this.mapDataObject = [];
-            for (const i in mapData['maps']) {
-                if (Object.prototype.hasOwnProperty.call(mapData['maps'], i)) {
-                    const mapID = mapData['maps'][i]['mapID'];
-                    this.mapDataObject.push(mapData['maps'][i].toJSON());
-                    this.run('GetSpotAreas', mapID);
-                    this.mapDataObjectQueue.push({
-                        'type': 'GetSpotAreas',
-                        'mapID': mapID
-                    });
-                    this.run('GetVirtualBoundaries', mapID);
-                    this.mapDataObjectQueue.push({
-                        'type': 'GetVirtualBoundaries',
-                        'mapID': mapID
-                    });
-                    // 950 type models
-                    if (this.createMapImage && tools.isCanvasModuleAvailable() && this.is950type()) {
-                        this.run('GetMapImage', mapID, 'outline', false);
-                        this.mapDataObjectQueue.push({
-                            'type': 'GetMapImage',
-                            'mapID': mapID
-                        });
-                    }
-                }
-            }
-        }
-    }
-
-    /**
-     * Handle object with spot area data to provide a full map data object
-     * @param {Object} spotAreas
-     * @returns {Promise<void>}
-     */
-    async handleMapSpotAreasEvent(spotAreas) {
-        const mapID = spotAreas['mapID'];
-        const mapObject = map.getMapObject(this.mapDataObject, mapID);
-        if (mapObject) {
-            mapObject['mapSpotAreas'] = [];
-            for (const i in spotAreas['mapSpotAreas']) {
-                if (Object.prototype.hasOwnProperty.call(spotAreas['mapSpotAreas'], i)) {
-                    const mapSpotAreaID = spotAreas['mapSpotAreas'][i]['mapSpotAreaID'];
-                    mapObject['mapSpotAreas'].push(spotAreas['mapSpotAreas'][i].toJSON());
-                    this.run('GetSpotAreaInfo', spotAreas['mapID'], mapSpotAreaID);
-                    this.mapDataObjectQueue.push({
-                        'type': 'GetSpotAreaInfo',
-                        'mapID': spotAreas['mapID'],
-                        'mapSpotAreaID': mapSpotAreaID
-                    });
-                }
-            }
-        }
-        this.mapDataObjectQueue = this.mapDataObjectQueue.filter(item => {
-            return !((item.mapID === mapID) && (item.type === 'GetSpotAreas'));
-        });
-    }
-
-    /**
-     * Handle object with virtual boundary data to provide a full map data object
-     * @param {Object} virtualBoundaries
-     * @returns {Promise<void>}
-     */
-    async handleMapVirtualBoundaries(virtualBoundaries) {
-        const mapID = virtualBoundaries['mapID'];
-        const mapObject = map.getMapObject(this.mapDataObject, mapID);
-        if (mapObject) {
-            mapObject['mapVirtualBoundaries'] = [];
-            const virtualBoundariesCombined = [...virtualBoundaries['mapVirtualWalls'], ...virtualBoundaries['mapNoMopZones']];
-            const virtualBoundaryArray = [];
-            for (const i in virtualBoundariesCombined) {
-                if (virtualBoundariesCombined.hasOwnProperty(i)) {
-                    virtualBoundaryArray[virtualBoundariesCombined[i]['mapVirtualBoundaryID']] = virtualBoundariesCombined[i];
-                }
-            }
-            for (const i in virtualBoundaryArray) {
-                if (virtualBoundaryArray.hasOwnProperty(i)) {
-                    const mapVirtualBoundaryID = virtualBoundaryArray[i]['mapVirtualBoundaryID'];
-                    const mapVirtualBoundaryType = virtualBoundaryArray[i]['mapVirtualBoundaryType'];
-                    mapObject['mapVirtualBoundaries'].push(virtualBoundaryArray[i].toJSON());
-                    this.run('GetVirtualBoundaryInfo', mapID, mapVirtualBoundaryID, mapVirtualBoundaryType);
-                    this.mapDataObjectQueue.push({
-                        'type': 'GetVirtualBoundaryInfo',
-                        'mapID': mapID,
-                        'mapVirtualBoundaryID': mapVirtualBoundaryID,
-                        'mapVirtualBoundaryType': mapVirtualBoundaryType
-                    });
-                }
-            }
-        }
-        this.mapDataObjectQueue = this.mapDataObjectQueue.filter(item => {
-            return !((item.mapID === mapID) && (item.type === 'GetVirtualBoundaries'));
-        });
-    }
-
-    /**
-     * Handle object with spot area info data to provide a full map data object
-     * @param {Object} spotAreaInfo
-     * @returns {Promise<void>}
-     */
-    async handleMapSpotAreaInfo(spotAreaInfo) {
-        const mapID = spotAreaInfo['mapID'];
-        const mapSpotAreaID = spotAreaInfo['mapSpotAreaID'];
-        const mapSpotAreasObject = map.getSpotAreaObject(this.mapDataObject, mapID, mapSpotAreaID);
-        if (mapSpotAreasObject) {
-            Object.assign(mapSpotAreasObject, spotAreaInfo.toJSON());
-        }
-        this.mapDataObjectQueue = this.mapDataObjectQueue.filter(item => {
-            if ((item.mapID === mapID) && (item.type === 'GetSpotAreaInfo')) {
-                if (item.mapSpotAreaID === mapSpotAreaID) {
-                    return false;
-                }
-            }
-            return true;
-        });
-        if (this.mapDataObjectQueue.length === 0) {
-            this.ecovacs.emit('MapDataReady');
-        }
-    }
-
-    /**
-     * Handle object with virtual boundary info data to provide a full map data object
-     * @param {Object} virtualBoundaryInfo
-     * @returns {Promise<void>}
-     */
-    async handleMapVirtualBoundaryInfo(virtualBoundaryInfo) {
-        const mapID = virtualBoundaryInfo['mapID'];
-        const virtualBoundaryID = virtualBoundaryInfo['mapVirtualBoundaryID'];
-        const mapVirtualBoundaryObject = map.getVirtualBoundaryObject(this.mapDataObject, mapID, virtualBoundaryID);
-        if (mapVirtualBoundaryObject) {
-            Object.assign(mapVirtualBoundaryObject, virtualBoundaryInfo.toJSON());
-        }
-        this.mapDataObjectQueue = this.mapDataObjectQueue.filter(item => {
-            if ((item.mapID === mapID) && (item.type === 'GetVirtualBoundaryInfo')) {
-                if (item.mapVirtualBoundaryType === virtualBoundaryInfo.mapVirtualBoundaryType) {
-                    if (item.mapVirtualBoundaryID === virtualBoundaryID) {
-                        return false;
-                    }
-                }
-            }
-            return true;
-        });
-        if (this.mapDataObjectQueue.length === 0) {
-            this.ecovacs.emit('MapDataReady');
-        }
-    }
-
-
-    /**
-     * Handle object with map image data to provide a full map data object
-     * @param {Object} mapImageInfo
-     * @returns {Promise<void>}
-     */
-    async handleMapImageInfo(mapImageInfo) {
-        const mapID = mapImageInfo['mapID'];
-        const mapObject = map.getMapObject(this.mapDataObject, mapID);
-        if (mapObject) {
-            mapObject['mapImage']= mapImageInfo;
-        }
-        this.mapDataObjectQueue = this.mapDataObjectQueue.filter(item => {
-            return !((item.mapID === mapID) && (item.type === 'GetMapImage'));
-        });
-        if (this.mapDataObjectQueue.length === 0) {
-            this.ecovacs.emit('MapDataReady');
         }
     }
 
@@ -828,16 +862,16 @@ class VacBot {
      * Returns true if you can retrieve information about "round mop" (life span)
      * @returns {boolean}
      */
-    hasRoundMops() {
-        return this.getDeviceProperty('round_mop');
+    hasRoundMopInfo() {
+        return this.getDeviceProperty('round_mop_info');
     }
 
     /**
-     * Returns true if you can retrieve information about "round mop" (life span)
+     * Returns true if you can retrieve information about "air freshener" (life span)
      * @returns {boolean}
      */
-    hasRoundMopInfo() {
-        return this.getDeviceProperty('round_mop_info');
+    hasAirFreshenerInfo() {
+        return this.getDeviceProperty('air_freshener_info');
     }
 
     /**
@@ -1001,35 +1035,35 @@ class VacBot {
                 this.mapPiecePacketsSent[command.getId()] = command.args.pid;
             }
         }
-        tools.envLog("[VacBot] Sending command `%s` with id %s", command.name, command.getId());
         let actionPayload = this.useMqttProtocol() ? command : command.toXml();
         (async () => {
             try {
                 await this.ecovacs.sendCommand(actionPayload);
             } catch (e) {
-                tools.envLog("[vacBot] Error sendCommand: " + e.message);
+                tools.envLogError(`error sendCommand: ${e.message}`);
             }
         })();
     }
 
     /**
-     * It disconnects the robot
+     * Disconnect from MQTT server (fully async)
      */
-    disconnect() {
-        this.ecovacs.disconnect();
-        this.is_ready = false;
+    async disconnectAsync() {
+        try {
+            await this.ecovacs.disconnect();
+            this.is_ready = false;
+        } catch (e) {
+            tools.envLogError(`error disconnecting: ${e.message}`);
+        }
     }
 
     /**
-     * Replace the `did` and `secret` with "[REMOVED]"
-     * @param {string} logData - The log data to be removed
-     * @returns {string} The log data with `did` and `secret` removed
+     * Disconnect from MQTT server
      */
-    removeFromLogs(logData) {
-        let output = logData;
-        output = output.replace(new RegExp("(" + this.vacuum.did + ")", "g"), "[REMOVED]");
-        output = output.replace(new RegExp("(" + this.ecovacs.secret + ")", "g"), "[REMOVED]");
-        return output;
+    disconnect() {
+        (async () => {
+            await this.disconnectAsync();
+        })();
     }
 
     async callCleanResultsLogsApi() {
@@ -1084,47 +1118,51 @@ class VacBot {
         };
 
         let searchParams = querystring.encode(queryParams);
-        tools.envLog(`[EcoVacsAPI] callLogsApi calling ${portalPath}`);
+        tools.envLogInfo(`[EcoVacsAPI] callLogsApi calling ${portalPath}`);
         try {
             const res = await axios.get(portalPath + searchParams, config);
             return res.data;
         } catch (err) {
-            tools.envLog(`[EcoVacsAPI] callLogsApi error: ${err}`);
+            tools.envLogInfo(`[EcoVacsAPI] callLogsApi error: ${err}`);
             throw err;
         }
     }
 
+    getCryptoHashStringForSecuredContent() {
+        const ts = Date.now();
+        return constants.APP_ID + constants.APP_SK + ts.toString();
+    }
+
     async downloadSecuredContent(url, targetFilename) {
+        let sign = crypto.createHash('sha256').update(this.getCryptoHashStringForSecuredContent()).digest("hex");
 
-        let ts = Date.now();
-        let sign = crypto.createHash('sha256').update(constants.APP_ID + constants.APP_SK + ts.toString()).digest("hex");
-
-        let config = {
-            headers: {
-                'Authorization': 'Bearer ' + this.user_access_token,
-                'token': this.user_access_token,
-                'appid': 'ecovacs',
-                'plat': 'android',
-                'userid': this.uid,
-                'user-agent': 'EcovacsHome/2.3.7 (Linux; U; Android 5.1.1; A5010 Build/LMY48Z)',
-                'v': '2.3.7',
-                'country':  this.country,
-                'sign': sign,
-                'signType': 'sha256'
-            }
+        let headers = {
+            'Authorization': 'Bearer ' + this.user_access_token,
+            'token': this.user_access_token,
+            'appid': 'ecovacs',
+            'plat': 'android',
+            'userid': this.uid,
+            'user-agent': 'EcovacsHome/2.3.7 (Linux; U; Android 5.1.1; A5010 Build/LMY48Z)',
+            'v': '2.3.7',
+            'country': this.country,
+            'sign': sign,
+            'signType': 'sha256'
         };
 
         try {
-            const res = await axios.get(url, config);
+            const res = await axios.get(url, {
+                headers,
+                responseType: 'arraybuffer'
+            });
             const result = res.data;
             const fs = require('fs');
             fs.writeFile(targetFilename, result, err => {
                 if (err) {
-                    tools.envLog(`[EcoVacsAPI] downloadSecuredContent error: ${err}`);
+                    tools.envLogInfo(`[EcoVacsAPI] downloadSecuredContent error: ${err}`);
                 }
             });
         } catch (err) {
-            tools.envLog(`[EcoVacsAPI] downloadSecuredContent error: ${err}`);
+            tools.envLogInfo(`[EcoVacsAPI] downloadSecuredContent error: ${err}`);
             throw err;
         }
     }
